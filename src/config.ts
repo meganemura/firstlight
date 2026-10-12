@@ -2,12 +2,13 @@
 // fallback, validated into CheckSpec values before anything runs. Also owns
 // the `after` graph (unknown names, cycles, the transitive selection) and
 // what each argument of `firstlight run <arg>...` stands for: a configured
-// check, a package.json script or glob, or a shell command. It reads files
-// and never starts a process.
+// check, a package.json script or glob, or a shell command, and which
+// checks `run --failed` runs again. It reads files and never starts a
+// process.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { CheckSpec } from "./checks.ts";
+import type { CheckSpec, ReportedStatus } from "./checks.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { expandPattern, isPattern, shellQuote } from "./names.ts";
 
@@ -159,9 +160,7 @@ export function selectChecks(checks: CheckSpec[], requested: string[]): CheckSpe
 // after `--`, is a shell command named by itself. Arguments keep their
 // order, and a configured check's `after` dependencies come just before it.
 export function resolveRun(root: string, args: readonly string[], commands: readonly string[]): CheckSpec[] {
-  const configPath = path.join(root, CONFIG_FILE);
-  const configText = readOptional(configPath);
-  const configured = configText === null ? [] : parseConfig(configText, configPath);
+  const configured = configuredChecks(root);
   const byName = new Map(configured.map((check) => [check.name, check]));
   let scripts: string[] | null | undefined;
   const scriptNames = (): string[] | null => {
@@ -227,6 +226,53 @@ export function resolveRun(root: string, args: readonly string[], commands: read
     );
   }
   return picked;
+}
+
+export interface PreviousCheck {
+  spec: CheckSpec;
+  status: ReportedStatus;
+}
+
+export interface FailedSelection {
+  checks: CheckSpec[];
+  // Checks that did not pass, but came from firstlight.json and are no
+  // longer in it.
+  dropped: string[];
+}
+
+// `firstlight run --failed`: every check of the latest run that did not
+// pass, resolved against the current firstlight.json the way `run <name>`
+// resolves a word. A configured check comes with its `after` checks, which
+// the cache then reuses where it can. A script or shell command given on
+// the command line has no entry in firstlight.json, so it runs the command
+// it ran before. A configured check that has since left firstlight.json is
+// dropped rather than run from a stale record.
+export function selectFailed(configured: CheckSpec[], previous: readonly PreviousCheck[]): FailedSelection {
+  const byName = new Map(configured.map((check) => [check.name, check]));
+  const picked: CheckSpec[] = [];
+  const dropped: string[] = [];
+  const add = (spec: CheckSpec): void => {
+    if (!picked.some((check) => check.name === spec.name)) picked.push(spec);
+  };
+  for (const { spec, status } of previous) {
+    if (status === "passed") continue;
+    if (byName.has(spec.name)) {
+      for (const check of selectChecks(configured, [spec.name])) add(check);
+    } else if (spec.after.length === 0 && (spec.run === scriptCheck(spec.name).run || spec.run === spec.name)) {
+      add(spec);
+    } else {
+      dropped.push(spec.name);
+    }
+  }
+  return { checks: picked, dropped };
+}
+
+// The checks of firstlight.json alone, without the package.json fallback:
+// what a word given to `run` can name as a configured check.
+export function configuredChecks(root: string): CheckSpec[] {
+  const configPath = path.join(root, CONFIG_FILE);
+  const configText = readOptional(configPath);
+  return configText === null ? [] : parseConfig(configText, configPath);
 }
 
 export function scriptCheck(script: string): CheckSpec {

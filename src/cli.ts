@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Command-line entry: parses arguments, runs `run`, `results`, and `stop`
-// against the state store, picks exit codes and next commands, and starts
-// the detached supervisor (this same file, under a hidden subcommand).
+// Command-line entry: parses arguments, runs `run`, `results`, `follow`,
+// and `stop` against the state store, picks exit codes and next commands,
+// and starts the detached supervisor (this same file, under a hidden
+// subcommand).
 // It never appends to events.jsonl; it only reads what the supervisor wrote.
 
 import { spawn } from "node:child_process";
@@ -10,14 +11,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { cacheKeys } from "./cache.ts";
-import { bucketOf, isSettled, type CheckView } from "./checks.ts";
-import { loadConfig, resolveRun } from "./config.ts";
+import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
+import { configuredChecks, loadConfig, resolveRun, selectFailed } from "./config.ts";
 import { AgentError, exitWithEnvelope } from "./errors.ts";
 import { estimate, type RunEta } from "./eta.ts";
 import { shellQuote } from "./names.ts";
 import { signalGroup, signalPid, sleep } from "./processes.ts";
-import { allPassedText, jsonLines, text } from "./report.ts";
-import { RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
+import { allPassedText, changeText, checkJson, jsonLines, summarize, summaryText, text } from "./report.ts";
+import { eventsPath, readEvents, RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
 import { supervise, SUPERVISE_COMMAND } from "./supervisor.ts";
 import { treeKey } from "./tree.ts";
 
@@ -28,7 +29,9 @@ const HELP = `firstlight: run lint, typecheck, and tests in parallel; return at 
 
 Usage:
   firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
+  firstlight run --failed [--no-cache] [--cwd DIR] [--json]
   firstlight results [--wait] [--cwd DIR] [--json]
+  firstlight follow [--cwd DIR] [--json]
   firstlight stop [--cwd DIR] [--json]
   firstlight --help
 
@@ -40,7 +43,15 @@ run      Stop the previous run if it is still going, start the checks in
            firstlight run "bundle exec rubocop" "bundle exec rspec"
            firstlight run lint -- make rspec
          With no arguments, every check in firstlight.json runs.
+         --failed runs only the checks that did not pass in the latest
+         run, each resolved like a name given to run (a configured check
+         brings its "after" checks); a check removed from firstlight.json
+         since is left out.
 results  Report the latest run. --wait blocks until every check is done.
+follow   Print one line for each status change of the latest run, from its
+         first one, as it happens, then the summary of results --wait, and
+         exit as results --wait would. Each line is flushed on its own, so
+         a log watcher sees it at once.
 stop     Cancel the checks still running. Does nothing when none are.
 
 Arguments of run:
@@ -75,7 +86,7 @@ typecheck, test, and archstrict.
 
 Exit codes:
   0  every check passed (run), or no check failed or was cancelled
-     (results), or stop finished
+     (results, follow), or stop finished
   1  a check failed, timed out, was skipped, was cancelled, or its
      result is unknown; or firstlight itself failed, with {"error","do"}
      on stderr
@@ -110,6 +121,7 @@ async function main(argv: string[]): Promise<number> {
         cwd: { type: "string" },
         json: { type: "boolean", default: false },
         wait: { type: "boolean", default: false },
+        failed: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -134,7 +146,7 @@ async function main(argv: string[]): Promise<number> {
   if (command === undefined) {
     throw new AgentError("missing command", "run `firstlight run`, or `firstlight --help` for the usage");
   }
-  if (!["run", "results", "stop"].includes(command)) {
+  if (!["run", "results", "follow", "stop"].includes(command)) {
     throw new AgentError(`unknown command: ${command}`, "run `firstlight --help` for the usage");
   }
   if (command !== "run" && (names.length > 0 || commands.length > 0)) {
@@ -146,6 +158,15 @@ async function main(argv: string[]): Promise<number> {
   if (values["no-cache"] && command !== "run") {
     throw new AgentError("--no-cache belongs to run", "run `firstlight run --no-cache`");
   }
+  if (values.failed && command !== "run") {
+    throw new AgentError("--failed belongs to run", "run `firstlight run --failed`");
+  }
+  if (values.failed && (names.length > 0 || commands.length > 0)) {
+    throw new AgentError(
+      "--failed picks the checks itself, so it takes no check names",
+      "run `firstlight run --failed` without names, or name the checks without --failed",
+    );
+  }
 
   const root = resolveRoot(path.resolve(values.cwd ?? process.cwd()));
   const ctx: Context = {
@@ -155,22 +176,39 @@ async function main(argv: string[]): Promise<number> {
   };
   switch (command) {
     case "run":
-      return runCommand(ctx, names, commands, !values["no-cache"]);
+      return runCommand(ctx, values.failed ? "failed" : { names, commands }, !values["no-cache"]);
     case "results":
       return resultsCommand(ctx, values.wait);
+    case "follow":
+      return followCommand(ctx);
     default:
       return stopCommand(ctx);
   }
 }
 
-async function runCommand(ctx: Context, names: string[], commands: string[], useCache: boolean): Promise<number> {
-  const checks =
-    names.length === 0 && commands.length === 0
-      ? loadConfig(ctx.state.root).checks
-      : resolveRun(ctx.state.root, names, commands);
+type Selection = "failed" | { names: string[]; commands: string[] };
 
+async function runCommand(ctx: Context, selection: Selection, useCache: boolean): Promise<number> {
   const previous = ctx.state.currentId();
-  if (previous !== null) await stopRun(ctx.state, previous);
+  let checks: CheckSpec[];
+  if (selection === "failed") {
+    if (previous === null) {
+      throw new AgentError(`no run yet for ${ctx.state.root}, so no check has failed`, cmd(ctx, "run"));
+    }
+    // Read before the stop, so a broken firstlight.json stops nothing; the
+    // selection comes after it, so a check the stop cancelled counts as one
+    // that did not pass.
+    const configured = configuredChecks(ctx.state.root);
+    await stopRun(ctx.state, previous);
+    checks = failedChecks(ctx, previous, configured);
+  } else {
+    const { names, commands } = selection;
+    checks =
+      names.length === 0 && commands.length === 0
+        ? loadConfig(ctx.state.root).checks
+        : resolveRun(ctx.state.root, names, commands);
+    if (previous !== null) await stopRun(ctx.state, previous);
+  }
 
   // After the stop, so a check of the previous run that was still writing
   // into the tree has finished before the tree is hashed. Keys are recorded
@@ -227,6 +265,23 @@ async function runCommand(ctx: Context, names: string[], commands: string[], use
   }
 }
 
+function failedChecks(ctx: Context, previous: string, configured: CheckSpec[]): CheckSpec[] {
+  const snapshot = ctx.state.snapshot(previous);
+  const specs = new Map(snapshot.run.checks.map((spec) => [spec.name, spec]));
+  const { checks, dropped } = selectFailed(
+    configured,
+    snapshot.checks.map((view) => ({ spec: specs.get(view.name)!, status: view.status })),
+  );
+  if (checks.length > 0) return checks;
+  if (dropped.length > 0) {
+    throw new AgentError(
+      `the checks that did not pass in run ${previous} are no longer in firstlight.json: ${dropped.join(", ")}`,
+      cmd(ctx, "run"),
+    );
+  }
+  throw new AgentError(`run ${previous} has no check that did not pass`, cmd(ctx, "run"));
+}
+
 async function resultsCommand(ctx: Context, wait: boolean): Promise<number> {
   const id = ctx.state.currentId();
   if (id === null) {
@@ -240,12 +295,61 @@ async function resultsCommand(ctx: Context, wait: boolean): Promise<number> {
   const eta = etaOf(snapshot, ctx.state.typicalDurations(snapshot.run));
   const next = nextFor(ctx, snapshot);
   out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
-  // A cancelled check proved nothing, so it does not count as a pass.
+  return resultsCode(snapshot);
+}
+
+// A cancelled check proved nothing, so it does not count as a pass.
+function resultsCode(snapshot: RunSnapshot): number {
   const unproven = snapshot.checks.some((view) => {
     const bucket = bucketOf(view.status);
     return bucket === "failed" || bucket === "cancelled";
   });
   return unproven ? 1 : 0;
+}
+
+// Reads events.jsonl and never writes it. Each poll replays the whole file
+// and prints the steps past the ones already printed; the snapshot is taken
+// before the events are read, so once it says every check is settled, the
+// events read after it hold every step it saw.
+async function followCommand(ctx: Context): Promise<number> {
+  const id = ctx.state.currentId();
+  if (id === null) {
+    throw new AgentError(`no run yet for ${ctx.state.root}`, cmd(ctx, "run"));
+  }
+  const run = ctx.state.readRun(id);
+  const typical = ctx.state.typicalDurations(run);
+  const names = run.checks.map((check) => check.name);
+  let printed = 0;
+  for (;;) {
+    const snapshot = ctx.state.snapshot(id);
+    let steps;
+    try {
+      steps = replay(names, readEvents(eventsPath(snapshot.dir)));
+    } catch (err) {
+      if (!(err instanceof IllegalTransition)) throw err;
+      throw new AgentError(`inconsistent events in ${eventsPath(snapshot.dir)}: ${err.message}`, cmd(ctx, "run"));
+    }
+    for (const step of steps.slice(printed)) {
+      const views = presentChecks({ checks: step.checks, outcome: null }, true);
+      const view = views.find((candidate) => candidate.name === step.event.check)!;
+      // The estimate as it stood when the change happened, not as of now.
+      const eta = estimate(views, run.checks, typical, Date.parse(step.event.at));
+      const at = { ...snapshot, checks: views };
+      out(ctx.json ? `${checkJson(at, view, eta)}\n` : changeText(at, view, eta));
+    }
+    printed = steps.length;
+    if (snapshot.checks.every(isSettled)) {
+      const eta = etaOf(snapshot, typical);
+      // An orphan has no event of its own; its unknown status is derived.
+      for (const view of snapshot.checks.filter((candidate) => candidate.orphan)) {
+        out(ctx.json ? `${checkJson(snapshot, view, eta)}\n` : changeText(snapshot, view, eta));
+      }
+      const next = nextFor(ctx, snapshot);
+      out(ctx.json ? `${JSON.stringify(summarize(snapshot, next, eta))}\n` : summaryText(snapshot, next, eta));
+      return resultsCode(snapshot);
+    }
+    await sleep(POLL_MS);
+  }
 }
 
 async function stopCommand(ctx: Context): Promise<number> {

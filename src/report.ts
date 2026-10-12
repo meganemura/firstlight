@@ -40,53 +40,74 @@ function showsLog(view: CheckView): boolean {
 }
 
 export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEta): string {
-  const logs = logPaths(snapshot.dir, snapshot.run.checks);
-  const lines = snapshot.checks.map((view) => {
-    const checkEta = etaOf(eta, view);
-    const line: Record<string, unknown> = {
-      type: "check",
-      name: view.name,
-      status: view.status,
-      exit_code: view.exit_code,
-      elapsed_ms: view.elapsed_ms,
-      log: logs.get(view.name),
-      eta_ms: roundMs(checkEta.eta_ms),
-      overdue: checkEta.overdue,
-      cached_from: view.cached_from,
-    };
-    if (view.orphan) line.orphan = true;
-    if (showsLog(view)) line.tail = tailLines(logs.get(view.name)!, TAIL_LINES);
-    return JSON.stringify(line);
-  });
+  const lines = snapshot.checks.map((view) => checkJson(snapshot, view, eta));
   lines.push(JSON.stringify(summarize(snapshot, next, eta)));
   return `${lines.join("\n")}\n`;
+}
+
+export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
+  const log = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
+  const checkEta = etaOf(eta, view);
+  const line: Record<string, unknown> = {
+    type: "check",
+    name: view.name,
+    status: view.status,
+    exit_code: view.exit_code,
+    elapsed_ms: view.elapsed_ms,
+    log,
+    eta_ms: roundMs(checkEta.eta_ms),
+    overdue: checkEta.overdue,
+    cached_from: view.cached_from,
+  };
+  if (view.orphan) line.orphan = true;
+  if (showsLog(view)) line.tail = tailLines(log, TAIL_LINES);
+  return JSON.stringify(line);
 }
 
 // `focus` puts one check first with its log, as `run` does for the check
 // that failed first; the others get one status line each.
 export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, focus: string | null = null): string {
   const out: string[] = [];
-  const logs = logPaths(snapshot.dir, snapshot.run.checks);
   const ordered =
     focus === null
       ? snapshot.checks
       : [...snapshot.checks.filter((v) => v.name === focus), ...snapshot.checks.filter((v) => v.name !== focus)];
   for (const view of ordered) {
     out.push(statusLine(snapshot, view, eta));
-    if (showsLog(view) && (focus === null || view.name === focus)) {
-      const file = logs.get(view.name)!;
-      const tail = tailLines(file, TAIL_LINES);
-      out.push(`  log: ${file}`);
-      if (tail.length === 0) out.push("    (no output)");
-      for (const line of tail) out.push(`    ${line}`);
-    }
+    if (showsLog(view) && (focus === null || view.name === focus)) out.push(...logBlock(snapshot, view));
   }
-  out.push(countsLine(snapshot, eta));
+  return `${out.join("\n")}\n${summaryText(snapshot, next, eta)}`;
+}
+
+// The lines after the check lines: the counts, then the next command.
+export function summaryText(snapshot: RunSnapshot, next: string | null, eta: RunEta): string {
+  const out = [countsLine(snapshot, eta)];
   if (next !== null) {
     const waiting = !snapshot.checks.every(isSettled) && eta.eta_ms !== null;
     out.push(waiting ? `next: ${next} (about ${formatSeconds(eta.eta_ms!)} left)` : `next: ${next}`);
   }
   return `${out.join("\n")}\n`;
+}
+
+// One status change, as `follow` prints it. A running check gets no
+// elapsed time: when `follow` replays history, the time since it started
+// is not the time it had run when it changed.
+export function changeText(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
+  if (view.status === "running") {
+    const checkEta = etaOf(eta, view);
+    return checkEta.eta_ms === null
+      ? `${view.name} running\n`
+      : `${view.name} running (about ${formatSeconds(checkEta.eta_ms)} left)\n`;
+  }
+  const out = [statusLine(snapshot, view, eta)];
+  if (showsLog(view)) out.push(...logBlock(snapshot, view));
+  return `${out.join("\n")}\n`;
+}
+
+function logBlock(snapshot: RunSnapshot, view: CheckView): string[] {
+  const file = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
+  const tail = tailLines(file, TAIL_LINES);
+  return [`  log: ${file}`, ...(tail.length === 0 ? ["    (no output)"] : tail.map((line) => `    ${line}`))];
 }
 
 export function allPassedText(snapshot: RunSnapshot): string {

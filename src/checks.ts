@@ -133,6 +133,29 @@ export function foldEvents(names: string[], events: RunEventLine[]): FoldedRun {
   return { checks: names.map((name) => states.get(name)!), outcome };
 }
 
+export interface ReplayStep {
+  event: CheckEvent;
+  checks: CheckState[];
+}
+
+// The run as it stood right after each check event, one step per event, so
+// a reader that arrives late still sees every status change in order. The
+// last step of each check agrees with foldEvents.
+export function replay(names: string[], events: RunEventLine[]): ReplayStep[] {
+  const states = new Map(names.map((name) => [name, initialState(name)]));
+  const steps: ReplayStep[] = [];
+  for (const event of events) {
+    if (event.type === "run") continue;
+    const current = states.get(event.check);
+    if (current === undefined) {
+      throw new IllegalTransition(event.check, "pending", event.status);
+    }
+    states.set(event.check, advance(current, event));
+    steps.push({ event, checks: names.map((name) => states.get(name)!) });
+  }
+  return steps;
+}
+
 export interface CheckView {
   name: string;
   status: ReportedStatus;

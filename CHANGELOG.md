@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `firstlight run --failed` runs only the checks of the latest run that did not pass (`failed`, `timed_out`, `skipped`, `cancelled`, or `unknown`). Each one resolves against the current `firstlight.json` like a name given to `run`: a configured check comes with its `after` checks, and reused passes still apply. A script or shell command from the command line runs the same command again, and a configured check removed from `firstlight.json` is left out. With no run yet, or no check that did not pass, it prints the error envelope with `firstlight run` and exits 1. It takes no check names.
+- `firstlight follow` attaches to the latest run and prints one line for each status change, from the first one, as it happens: `test passed (exit 0, 10.4s)`, or `typecheck failed (exit 2, 3.5s)` with the same log tail that `run` prints. It ends with the summary lines of `results --wait` and exits with the same code. `--json` prints one check object per change, in the shape of `results --json`, then the summary. Each line is written on its own, so a line watcher such as Claude Code's Monitor sees it at once. `follow` never writes `events.jsonl`.
+
 ## 0.1.0 (2026-10-12)
 
 The first version of firstlight.

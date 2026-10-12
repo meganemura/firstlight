@@ -48,10 +48,18 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
    firstlight results --wait
    ```
 
+   Or watch each check finish as it happens, with `firstlight follow`.
+
 4. Run again. This cancels anything left from step 1:
 
    ```sh
    firstlight run lint typecheck test
+   ```
+
+   Or run only what did not pass the last time:
+
+   ```sh
+   firstlight run --failed
    ```
 
 ## Arguments of `run`
@@ -122,13 +130,17 @@ The repository root is `git rev-parse --show-toplevel` from the current director
 
 ```text
 firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
+firstlight run --failed [--no-cache] [--cwd DIR] [--json]
 firstlight results [--wait] [--cwd DIR] [--json]
+firstlight follow [--cwd DIR] [--json]
 firstlight stop [--cwd DIR] [--json]
 firstlight --help
 ```
 
 - `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree is reused instead of run; see [Reused passes](#reused-passes). `--no-cache` runs every selected check.
+- `run --failed` runs only the checks that did not pass in the latest run; see [Running what failed](#running-what-failed).
 - `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the log path and the last 40 log lines. `--wait` blocks until every check is done.
+- `follow` prints the status changes of the latest run as they happen; see [Following a run](#following-a-run).
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
 
 A `running` or `pending` check shows about how long it has left, and the `next: firstlight results --wait` line shows the time left for the whole run, so the agent knows when to pull the rest:
@@ -144,6 +156,33 @@ next: firstlight results --wait (about 12s left)
 ```
 
 The estimate comes from the `elapsed_ms` of the newest `passed` result of a check with the same name and the same `run` command in an earlier kept run. This holds for script and command checks too: `lint:js` is the command `npm run lint:js` every time. A failed, timed-out, or cancelled result does not count, because it stopped early. A running check has that duration minus the time it has run. When it has already run longer, the line says `past its usual 9.0s` instead. A pending check has its own duration plus the longest time left of its `after` checks. The run has the longest time left of its unfinished checks. When a check, or one of its `after` checks, has no such history, firstlight shows no estimate for it, and none for the run. Times below 10 seconds keep one decimal; longer times are whole seconds.
+
+## Running what failed
+
+`firstlight run --failed` runs the checks of the latest run that did not pass: `failed`, `timed_out`, `skipped`, `cancelled`, and `unknown`. If the latest run is still going, it is stopped first, so a check that stop cancels runs again too. Each check resolves the way its name does in `firstlight run <name>`, against the current `firstlight.json`: a configured check comes with the checks it is `after`, and a reused pass still applies, so an `after` check that passed on the same working tree is not run again. A `package.json` script or a shell command that was given on the command line runs the same command again. A configured check that has since been removed from `firstlight.json` is left out.
+
+When there is no run yet, or every check of the latest run passed, `run --failed` starts nothing, prints the error envelope with `"do":"firstlight run"`, and exits 1, because there is nothing it could prove. The same happens when every check that did not pass has been removed from `firstlight.json`. `--failed` takes no check names.
+
+The latest run is the one `--failed` reads, so after `firstlight run --failed`, the next `--failed` narrows to what still fails among those checks. Run `firstlight run` to run every check again.
+
+## Following a run
+
+`firstlight follow` attaches to the latest run and prints one line for each status change of each check, starting from the first one, so a late caller sees the whole history. It then prints the summary lines that `results --wait` prints and exits with the code `results --wait` would give:
+
+```text
+lint running
+test running
+lint failed (exit 1, 0.4s)
+  log: /.../lint.log
+    src/a.ts:3:1 unused variable x
+test passed (exit 0, 10.4s)
+run 01K...: 1 failed, 1 passed
+next: firstlight run
+```
+
+A `running` line shows the time left that firstlight estimated when the check started, when there is one. A failed or timed-out check has the same log tail that `run` prints. A reused pass says `cached from run 01K...`, and a check whose supervisor died appears as `unknown` at the end. With `--json`, each change is one check object, in the same shape as `results --json`, and the last line is the summary object.
+
+Each line is written as it happens, with no buffering, so a tool that watches a command's output line by line, such as Claude Code's Monitor, sees each check finish. `follow` only reads the state; the supervisor stays the only writer of `events.jsonl`. With no run yet, it prints the error envelope with `"do":"firstlight run"`.
 
 ## Reused passes
 
@@ -194,7 +233,7 @@ The default output is short plain text with no colors. `--json` prints JSON Line
 | Command | 0 | 1 |
 | --- | --- | --- |
 | `run` | every check passed | any check did not pass |
-| `results` | no check is `failed`, `timed_out`, `skipped`, `cancelled`, or `unknown` | at least one is |
+| `results`, `follow` | no check is `failed`, `timed_out`, `skipped`, `cancelled`, or `unknown` | at least one is |
 | `stop` | the run stopped, or nothing was running | firstlight itself failed |
 
 When firstlight itself fails (bad config, unknown command, no run yet), it exits 1 and prints one JSON object on stderr:
