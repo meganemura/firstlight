@@ -108,7 +108,7 @@ test("a script check gets a time-left estimate from its last pass under the same
   assert.doesNotMatch(first.stdout, /left/);
   assert.equal((await cli(repo, ["results", "--wait"])).code, 1);
 
-  const second = await cli(repo, ["run", "q:fail", "slow:*"]);
+  const second = await cli(repo, ["run", "--no-cache", "q:fail", "slow:*"]);
   assert.equal(second.code, 1, second.stderr);
   assert.match(second.stdout, /\nslow:x running \(\d+\.\ds, about \d+\.\ds left\)\n/);
 });

@@ -1,11 +1,12 @@
 // The per-run supervisor: a detached process that starts each check when
 // its `after` checks have passed, waits on it, enforces its timeout, and
 // appends every status change to events.jsonl. It is the only writer of
-// that file. It exits when every check is terminal, or after SIGTERM once
+// that file, so it also records the passes the CLI chose to reuse, before
+// it starts anything, and their dependents start at once. It exits when every check is terminal, or after SIGTERM once
 // it has cancelled what was left. It prints nothing; the CLI reads the file.
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, openSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import {
@@ -59,6 +60,17 @@ class Supervisor {
       process.on(signal, () => {
         void this.stop();
       });
+    }
+    for (const check of this.run.checks) {
+      const reuse = this.run.reused?.[check.name];
+      if (reuse === undefined) continue;
+      // The log is written so its path in the output points at something
+      // that says why this run has no output of its own.
+      writeFileSync(
+        this.logs.get(check.name)!,
+        `firstlight: not run; passed in run ${reuse.run} on the same working tree with the same command\n`,
+      );
+      this.record(check.name, "passed", { exit_code: 0, elapsed_ms: reuse.elapsed_ms, cached_from: reuse.run });
     }
     this.schedule();
   }

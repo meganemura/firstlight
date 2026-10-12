@@ -9,6 +9,7 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { cacheKeys } from "./cache.ts";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { loadConfig, resolveRun } from "./config.ts";
 import { AgentError, exitWithEnvelope } from "./errors.ts";
@@ -18,6 +19,7 @@ import { signalGroup, signalPid, sleep } from "./processes.ts";
 import { allPassedText, jsonLines, text } from "./report.ts";
 import { RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
 import { supervise, SUPERVISE_COMMAND } from "./supervisor.ts";
+import { treeKey } from "./tree.ts";
 
 const POLL_MS = 50;
 const STOP_WAIT_MS = 5_000;
@@ -25,7 +27,7 @@ const STOP_WAIT_MS = 5_000;
 const HELP = `firstlight: run lint, typecheck, and tests in parallel; return at the first failure.
 
 Usage:
-  firstlight run [name|pattern|"command"...] [-- command...] [--cwd DIR] [--json]
+  firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
   firstlight results [--wait] [--cwd DIR] [--json]
   firstlight stop [--cwd DIR] [--json]
   firstlight --help
@@ -55,6 +57,13 @@ A running or pending check shows about how long it has left once an
 earlier kept run passed the same check with the same command, for example
 "test running (3.5s, about 8.0s left)". The "next:" line shows the time
 left for the whole run. Without that history, no estimate is shown.
+
+A check that passed in a kept run on the same working tree (tracked and
+untracked files, not ignored ones) with the same command, and whose
+"after" checks did the same, is not run again: "test passed (cached from
+run 01K..., 10.4s originally)". Environment variables and files outside
+the repository are not part of that comparison; --no-cache runs every
+check anyway. Only a pass is reused, and only in a git repository.
 
 Checks come from firstlight.json at the repository root; "run" is any
 shell command:
@@ -101,6 +110,7 @@ async function main(argv: string[]): Promise<number> {
         cwd: { type: "string" },
         json: { type: "boolean", default: false },
         wait: { type: "boolean", default: false },
+        "no-cache": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -133,6 +143,9 @@ async function main(argv: string[]): Promise<number> {
   if (values.wait && command !== "results") {
     throw new AgentError("--wait belongs to results", "run `firstlight results --wait`");
   }
+  if (values["no-cache"] && command !== "run") {
+    throw new AgentError("--no-cache belongs to run", "run `firstlight run --no-cache`");
+  }
 
   const root = resolveRoot(path.resolve(values.cwd ?? process.cwd()));
   const ctx: Context = {
@@ -142,7 +155,7 @@ async function main(argv: string[]): Promise<number> {
   };
   switch (command) {
     case "run":
-      return runCommand(ctx, names, commands);
+      return runCommand(ctx, names, commands, !values["no-cache"]);
     case "results":
       return resultsCommand(ctx, values.wait);
     default:
@@ -150,7 +163,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-async function runCommand(ctx: Context, names: string[], commands: string[]): Promise<number> {
+async function runCommand(ctx: Context, names: string[], commands: string[], useCache: boolean): Promise<number> {
   const checks =
     names.length === 0 && commands.length === 0
       ? loadConfig(ctx.state.root).checks
@@ -159,7 +172,13 @@ async function runCommand(ctx: Context, names: string[], commands: string[]): Pr
   const previous = ctx.state.currentId();
   if (previous !== null) await stopRun(ctx.state, previous);
 
-  const run = ctx.state.createRun(checks);
+  // After the stop, so a check of the previous run that was still writing
+  // into the tree has finished before the tree is hashed. Keys are recorded
+  // even under --no-cache, so a later run can reuse this one.
+  const tree = treeKey(ctx.state.root);
+  const keys = tree === null ? new Map<string, string>() : cacheKeys(checks, tree);
+  const reused = useCache ? ctx.state.reusable(keys) : new Map();
+  const run = ctx.state.createRun(checks, keys, reused);
   const runDir = ctx.state.runDir(run.id);
   // The supervisor has no terminal; its own stderr goes to a file so a
   // crash of firstlight itself is still visible after the fact.

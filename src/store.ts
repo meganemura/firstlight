@@ -1,7 +1,8 @@
 // The on-disk state of runs under XDG_STATE_HOME, never inside the checked
 // repository: repository identity, run ids, run.json, events.jsonl, the
-// `current` pointer, check logs, and pruning. The CLI writes run.json and
-// `current`; only the supervisor appends to events.jsonl.
+// `current` pointer, check logs, and pruning, and the earlier runs read back
+// for the time-left estimate and for reused passes. The CLI writes run.json
+// and `current`; only the supervisor appends to events.jsonl.
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -27,10 +28,12 @@ import {
   IllegalTransition,
   presentChecks,
   type CheckSpec,
+  type CheckState,
   type CheckView,
   type RunEventLine,
   type RunOutcome,
 } from "./checks.ts";
+import { findReuse, type Reuse } from "./cache.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { typicalDurations, type PastRun } from "./eta.ts";
 import { logFileNames } from "./names.ts";
@@ -46,6 +49,17 @@ export interface RunRecord {
   supervisor_pid: number | null;
   started_at: string;
   checks: CheckSpec[];
+  // Absent in a run written before the cache existed, and empty when the
+  // root had no tree key: such a run is never a cache source.
+  cache_keys?: Record<string, string>;
+  // The passes the CLI chose to reuse; the supervisor records them as
+  // events, so it stays the only writer of events.jsonl.
+  reused?: Record<string, Reuse>;
+}
+
+interface PastRunFiles {
+  record: RunRecord;
+  states: CheckState[];
 }
 
 export interface RunSnapshot {
@@ -120,7 +134,7 @@ export class RepoState {
     atomicWrite(path.join(this.dir, "current"), `${id}\n`);
   }
 
-  createRun(checks: CheckSpec[]): RunRecord {
+  createRun(checks: CheckSpec[], cacheKeys: ReadonlyMap<string, string>, reused: ReadonlyMap<string, Reuse>): RunRecord {
     const id = newRunId();
     mkdirSync(this.runDir(id), { recursive: true });
     const run: RunRecord = {
@@ -129,6 +143,8 @@ export class RepoState {
       supervisor_pid: null,
       started_at: new Date().toISOString(),
       checks,
+      cache_keys: Object.fromEntries(cacheKeys),
+      reused: Object.fromEntries(reused),
     };
     this.writeRun(run);
     return run;
@@ -181,23 +197,39 @@ export class RepoState {
     }
   }
 
-  // Only the kept runs older than `run` are read, so the history costs no
-  // file of its own. An earlier run that no longer reads cleanly is history
-  // with nothing to say, not a reason to fail the current command.
   typicalDurations(run: RunRecord): Map<string, number> {
-    const past: PastRun[] = [];
+    const past: PastRun[] = this.pastRuns()
+      .filter((files) => files.record.id < run.id)
+      .map((files) => ({ checks: files.record.checks, states: files.states }));
+    return typicalDurations(run.checks, past);
+  }
+
+  // Called before the new run exists, so every kept run is earlier.
+  reusable(cacheKeys: ReadonlyMap<string, string>): Map<string, Reuse> {
+    const past = this.pastRuns().map((files) => ({
+      id: files.record.id,
+      keys: files.record.cache_keys ?? {},
+      states: files.states,
+    }));
+    return findReuse(cacheKeys, past);
+  }
+
+  // Newest first. Only the kept runs are read, so the history costs no file
+  // of its own. An earlier run that no longer reads cleanly is history with
+  // nothing to say, not a reason to fail the current command.
+  private pastRuns(): PastRunFiles[] {
+    const past: PastRunFiles[] = [];
     for (const id of this.runIds()) {
-      if (id >= run.id) continue;
       try {
         const record = this.readRun(id);
         const names = record.checks.map((check) => check.name);
         const folded = foldEvents(names, readEvents(eventsPath(this.runDir(id))));
-        past.push({ checks: record.checks, states: folded.checks });
+        past.push({ record, states: folded.checks });
       } catch {
         continue;
       }
     }
-    return typicalDurations(run.checks, past);
+    return past;
   }
 
   // Newest first. Run ids sort by creation time.
@@ -314,6 +346,8 @@ function isRunRecord(value: unknown): value is RunRecord {
   if (typeof value.id !== "string" || typeof value.root !== "string" || typeof value.started_at !== "string") return false;
   if (!(value.supervisor_pid === null || Number.isInteger(value.supervisor_pid))) return false;
   if (!Array.isArray(value.checks)) return false;
+  if (value.cache_keys !== undefined && !isStringRecord(value.cache_keys)) return false;
+  if (value.reused !== undefined && !isReuseRecord(value.reused)) return false;
   return value.checks.every(
     (check) =>
       isRecord(check) &&
@@ -330,7 +364,21 @@ function isEvent(value: unknown): value is RunEventLine {
   return (
     value.type === "check" &&
     typeof value.check === "string" &&
-    CHECK_STATUSES.includes(value.status as never)
+    CHECK_STATUSES.includes(value.status as never) &&
+    (value.cached_from === undefined || typeof value.cached_from === "string")
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
+}
+
+function isReuseRecord(value: unknown): value is Record<string, Reuse> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (entry) => isRecord(entry) && typeof entry.run === "string" && typeof entry.elapsed_ms === "number",
+    )
   );
 }
 

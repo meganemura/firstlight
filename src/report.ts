@@ -52,6 +52,7 @@ export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEt
       log: logs.get(view.name),
       eta_ms: roundMs(checkEta.eta_ms),
       overdue: checkEta.overdue,
+      cached_from: view.cached_from,
     };
     if (view.orphan) line.orphan = true;
     if (showsLog(view)) line.tail = tailLines(logs.get(view.name)!, TAIL_LINES);
@@ -91,13 +92,18 @@ export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, fo
 export function allPassedText(snapshot: RunSnapshot): string {
   const seconds = (Date.now() - Date.parse(snapshot.run.started_at)) / 1000;
   const count = snapshot.checks.length;
-  return `passed ${count} check${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s (run ${snapshot.run.id})\n`;
+  const cached = cachedCount(snapshot);
+  const notes = cached === 0 ? `run ${snapshot.run.id}` : `${cached} cached, run ${snapshot.run.id}`;
+  return `passed ${count} check${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s (${notes})\n`;
 }
 
 function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
   const details: string[] = [];
   if (view.orphan) {
     details.push("orphan: the supervisor is gone, so the result is unknown");
+  } else if (view.cached_from !== null) {
+    details.push(`cached from run ${view.cached_from}`);
+    if (view.elapsed_ms !== null) details.push(`${(view.elapsed_ms / 1000).toFixed(1)}s originally`);
   } else if (view.status === "skipped") {
     const spec = snapshot.run.checks.find((check) => check.name === view.name);
     details.push(`needs ${spec?.after.join(", ") ?? "?"}`);
@@ -122,7 +128,12 @@ function countsLine(snapshot: RunSnapshot, eta: RunEta): string {
   const parts = (["failed", "running", "cancelled", "passed"] as const)
     .filter((bucket) => summary[bucket].length > 0)
     .map((bucket) => `${summary[bucket].length} ${bucket}`);
-  return `run ${snapshot.run.id}: ${parts.join(", ")}`;
+  const cached = cachedCount(snapshot);
+  return `run ${snapshot.run.id}: ${parts.join(", ")}${cached === 0 ? "" : ` (${cached} cached)`}`;
+}
+
+function cachedCount(snapshot: RunSnapshot): number {
+  return snapshot.checks.filter((view) => view.cached_from !== null).length;
 }
 
 function etaOf(eta: RunEta, view: CheckView): CheckEta {

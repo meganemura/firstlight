@@ -18,11 +18,12 @@ function view(name: string, status: CheckStatus | "unknown", startedMsAgo: numbe
     started_at: startedMsAgo === null ? null : new Date(NOW - startedMsAgo).toISOString(),
     pid: null,
     orphan: status === "unknown",
+    cached_from: null,
   };
 }
 
 function state(name: string, status: CheckStatus, elapsed_ms: number | null): CheckState {
-  return { name, status, pid: null, exit_code: null, started_at: null, elapsed_ms };
+  return { name, status, pid: null, exit_code: null, started_at: null, elapsed_ms, cached_from: null };
 }
 
 test("a running check has its usual duration minus the time it has run", () => {

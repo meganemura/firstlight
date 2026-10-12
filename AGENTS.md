@@ -13,17 +13,19 @@ The user-facing description is in `README.md`.
 ## Layout
 
 - `src/cli.ts`: the entry point. It parses arguments, runs the commands, picks exit codes and next commands, and starts the supervisor.
-- `src/supervisor.ts`: the detached per-run supervisor. It is `src/cli.ts` started again with the hidden `__supervise <run dir>` subcommand. It is the only writer of `events.jsonl`.
-- `src/checks.ts`: the check status state machine, the event types, and the fold from events to the status of each check, including the `unknown`/`orphan` rule. No I/O.
+- `src/supervisor.ts`: the detached per-run supervisor. It is `src/cli.ts` started again with the hidden `__supervise <run dir>` subcommand. It is the only writer of `events.jsonl`, so it also records the passes the CLI chose to reuse, before it starts any check.
+- `src/checks.ts`: the check status state machine, the event types, and the fold from events to the status of each check, including the `unknown`/`orphan` rule, and the one step outside the transition table: a reused `passed` straight from `pending`, legal only with `cached_from`. No I/O.
 - `src/eta.ts`: the time-left estimate, from the newest pass of the same check in an earlier run. No I/O.
+- `src/cache.ts`: the cache key of each check (the tree key, its `run` command, and the keys of its `after` checks) and the lookup of a reusable pass in earlier runs. No I/O.
+- `src/tree.ts`: the tree key, the git tree hash of the working tree with untracked files and without ignored ones, computed through a temporary index so the user's index and refs do not change.
 - `src/config.ts`: `firstlight.json` and the `package.json` fallback, validation, the `after` graph, check selection, and what each argument of `run` stands for (a configured check, a script or script pattern, or a shell command).
 - `src/names.ts`: the npm-run-all pattern match over script names, the log file name of each check, and shell quoting. No I/O.
-- `src/store.ts`: state under `$XDG_STATE_HOME/firstlight/<repo-key>/`: run ids, `run.json`, `events.jsonl`, `current`, logs, pruning, and the usual durations read from the kept runs.
+- `src/store.ts`: state under `$XDG_STATE_HOME/firstlight/<repo-key>/`: run ids, `run.json`, `events.jsonl`, `current`, logs, pruning, and the usual durations and reusable passes read from the kept runs.
 - `src/processes.ts`: pid liveness and process-group signals.
 - `src/report.ts`: plain text and JSON Lines output.
 - `src/errors.ts`: the `{"error","do"}` envelope.
-- `test/*.test.ts`: vitest tests. Most run the real CLI as a child process against temporary git repositories, each with its own `XDG_STATE_HOME`. `test/helpers.ts` holds the fixtures. `test/*.property.test.ts` are Hegel property tests of the pure parts: the state machine, `after` validation, run ids, the time-left estimate, the script pattern match, and log file names.
-- `archstrict.config.ts`: the module boundaries and the layer order, `checks.ts`, `eta.ts`, and `names.ts` at the bottom, then `config.ts`, `errors.ts`, `processes.ts`, and `store.ts`, then `report.ts` and `supervisor.ts`, then `cli.ts`. Every module is strict, and `archstrict.todo.json` is empty.
+- `test/*.test.ts`: vitest tests. Most run the real CLI as a child process against temporary git repositories, each with its own `XDG_STATE_HOME`. `test/helpers.ts` holds the fixtures. `test/*.property.test.ts` are Hegel property tests of the pure parts: the state machine, `after` validation, run ids, the time-left estimate, cache keys and reuse, the script pattern match, and log file names.
+- `archstrict.config.ts`: the module boundaries and the layer order, `cache.ts`, `checks.ts`, `eta.ts`, and `names.ts` at the bottom, then `config.ts`, `errors.ts`, `processes.ts`, `store.ts`, and `tree.ts`, then `report.ts` and `supervisor.ts`, then `cli.ts`. Every module is strict, and `archstrict.todo.json` is empty.
 - `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`.
 - `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
 

@@ -71,7 +71,7 @@ test("run estimates the time left from the last pass of the same check, and only
   assert.doesNotMatch(first.stdout, /left|usual/);
   assert.equal((await cli(repo, ["results", "--wait"])).code, 1);
 
-  const second = await cli(repo, ["run"]);
+  const second = await cli(repo, ["run", "--no-cache"]);
   assert.equal(second.code, 1, second.stderr);
   const line = /\nslow running \(\d+\.\ds, about (\d+\.\d)s left\)\n/.exec(second.stdout);
   assert.ok(line !== null, second.stdout);
@@ -80,7 +80,7 @@ test("run estimates the time left from the last pass of the same check, and only
   assert.match(second.stdout, /\nnext: firstlight results --wait \(about \d+\.\ds left\)\n$/);
   assert.equal((await cli(repo, ["results", "--wait"])).code, 1);
 
-  const json = await cli(repo, ["run", "--json"]);
+  const json = await cli(repo, ["run", "--json", "--no-cache"]);
   assert.equal(json.code, 1, json.stderr);
   const lines = parseLines(json.stdout);
   const quick = lines.find((entry) => entry.name === "quick")!;

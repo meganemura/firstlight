@@ -110,13 +110,13 @@ The repository root is `git rev-parse --show-toplevel` from the current director
 ## Commands
 
 ```text
-firstlight run [name|pattern|"command"...] [-- command...] [--cwd DIR] [--json]
+firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
 firstlight results [--wait] [--cwd DIR] [--json]
 firstlight stop [--cwd DIR] [--json]
 firstlight --help
 ```
 
-- `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done.
+- `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree is reused instead of run; see [Reused passes](#reused-passes). `--no-cache` runs every selected check.
 - `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the log path and the last 40 log lines. `--wait` blocks until every check is done.
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
 
@@ -134,17 +134,49 @@ next: firstlight results --wait (about 12s left)
 
 The estimate comes from the `elapsed_ms` of the newest `passed` result of a check with the same name and the same `run` command in an earlier kept run. This holds for script and command checks too: `lint:js` is the command `npm run lint:js` every time. A failed, timed-out, or cancelled result does not count, because it stopped early. A running check has that duration minus the time it has run. When it has already run longer, the line says `past its usual 9.0s` instead. A pending check has its own duration plus the longest time left of its `after` checks. The run has the longest time left of its unfinished checks. When a check, or one of its `after` checks, has no such history, firstlight shows no estimate for it, and none for the run. Times below 10 seconds keep one decimal; longer times are whole seconds.
 
+## Reused passes
+
+When a check already passed in a kept run on the same working tree, with the same command, `firstlight run` does not run it again. It reports the earlier pass:
+
+```text
+test passed (cached from run 01K..., 10.4s originally)
+```
+
+If every selected check is reused, `run` starts no check and exits 0 at once: `passed 4 checks in 0.2s (4 cached, run 01K...)`. A check that is `after` a reused check starts right away. This saves the slow checks when an agent runs again after changing nothing, or after a failure in a different check.
+
+firstlight compares a cache key. The key of a check is the SHA-256 of:
+
+- the tree key: the git tree hash of the working tree, tracked and untracked files, without ignored files. firstlight computes it with `git add -A` and `git write-tree` against a temporary index of its own, so the real index, the staged changes, and the refs do not change. The blobs of changed files go into the object store as loose objects, which `git gc` removes later like any other unreferenced object;
+- the check's `run` command;
+- the keys of its `after` checks.
+
+The name of a check and its `timeoutSec` are not part of the key. `firstlight.json` is part of the tree unless it is ignored, so an edit to it runs every check again.
+
+Only a `passed` result is reused. A `failed`, `timed_out`, `cancelled`, `skipped`, or `unknown` check runs again. firstlight finds a pass in the kept runs, newest first, so a pruned run stops being a source. A pass that was itself reused names the run that really ran the check, with that run's time, so a chain of unchanged runs keeps one origin.
+
+The limits:
+
+- Environment variables are not part of the key. A check whose result depends on one gives the earlier result after that variable changes.
+- Files outside the repository, ignored files (for example `node_modules/`), the installed tools, and the state of a network service are not part of the key.
+- The tree is hashed once, when the run starts. An edit made while a check runs is not in the key of that run.
+- A directory that is not the root of a git repository has no tree key, and nothing is reused there. A git failure has the same effect.
+
+In these cases, run `firstlight run --no-cache`. It runs every selected check, and still records the keys, so a later run can reuse its passes.
+
+## Statuses and output
+
 A check is `pending`, `running`, `passed`, `failed`, `timed_out`, `cancelled`, or `skipped`. A check is `unknown`, with `orphan: true`, when its supervisor process is gone before the check finished. firstlight does not invent an exit code for it. A check killed by a signal has the exit code 128 plus the signal number.
 
 The default output is short plain text with no colors. `--json` prints JSON Lines: one object per check, then one summary:
 
 ```json
-{"type":"check","name":"lint","status":"failed","exit_code":1,"elapsed_ms":205,"log":"/.../lint.log","eta_ms":0,"overdue":false,"tail":["src/a.ts:3:1 unused variable x"]}
-{"type":"check","name":"test","status":"running","exit_code":null,"elapsed_ms":null,"log":"/.../test.log","eta_ms":8012,"overdue":false}
+{"type":"check","name":"lint","status":"failed","exit_code":1,"elapsed_ms":205,"log":"/.../lint.log","eta_ms":0,"overdue":false,"cached_from":null,"tail":["src/a.ts:3:1 unused variable x"]}
+{"type":"check","name":"test","status":"running","exit_code":null,"elapsed_ms":null,"log":"/.../test.log","eta_ms":8012,"overdue":false,"cached_from":null}
+{"type":"check","name":"build","status":"passed","exit_code":0,"elapsed_ms":10412,"log":"/.../build.log","eta_ms":0,"overdue":false,"cached_from":"01K..."}
 {"type":"summary","run":"01K...","failed":["lint"],"running":["test"],"passed":["build"],"cancelled":[],"next":"firstlight results --wait","eta_ms":8012}
 ```
 
-`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
+`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `cached_from` is the id of the run that ran a reused check, or `null`. That run may be pruned since. For a reused check, `exit_code` and `elapsed_ms` come from that run, and its log holds one line that names it. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
 
 ## Exit codes
 
@@ -169,7 +201,8 @@ firstlight never writes into the repository it checks. State lives under:
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/firstlight/<repo-key>/
   current                   the latest run id
-  runs/<run-id>/run.json    the run: root, supervisor pid, start time, checks
+  runs/<run-id>/run.json    the run: root, supervisor pid, start time, checks,
+                            cache keys, and the passes it reused
   runs/<run-id>/events.jsonl  every status change, appended by the supervisor
   runs/<run-id>/<check>.log   stdout and stderr of one check
   runs/<run-id>/supervisor.log  stderr of the supervisor itself
@@ -179,12 +212,12 @@ The log file name of a check is its name with each character outside `[A-Za-z0-9
 
 `<repo-key>` is the first 16 hex characters of the SHA-256 of the repository root path. Run ids sort by start time. firstlight keeps the newest 20 runs.
 
-Each run has one detached supervisor process. It starts the checks, waits on them, enforces timeouts, and writes `events.jsonl`. There is no long-lived daemon. Each check runs in its own process group, so a stop or a timeout reaches every process the check started.
+Each run has one detached supervisor process. It records the reused passes, starts the other checks, waits on them, enforces timeouts, and writes `events.jsonl`. There is no long-lived daemon. Each check runs in its own process group, so a stop or a timeout reaches every process the check started.
 
 ## Non-goals for v0.1
 
 - No parsing of diagnostics. firstlight shows the log tail as it is.
-- No cache. Every run starts every selected check. Earlier runs only feed the time-left estimate.
+- No cache beyond reused passes. Earlier runs feed the time-left estimate and the passes a run reuses, and nothing else.
 - No daemon, no queue, and no watch mode.
 
 ## Development

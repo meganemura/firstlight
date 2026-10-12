@@ -26,6 +26,7 @@ export default {
   // The layers, bottom to top. A file may import its own layer or a lower
   // one, never a higher one.
   classify: [
+    { glob: "src/cache.ts", tags: ["layer:machine"] },
     { glob: "src/checks.ts", tags: ["layer:machine"] },
     { glob: "src/eta.ts", tags: ["layer:machine"] },
     { glob: "src/names.ts", tags: ["layer:machine"] },
@@ -33,6 +34,7 @@ export default {
     { glob: "src/errors.ts", tags: ["layer:base"] },
     { glob: "src/processes.ts", tags: ["layer:base"] },
     { glob: "src/store.ts", tags: ["layer:base"] },
+    { glob: "src/tree.ts", tags: ["layer:base"] },
     { glob: "src/report.ts", tags: ["layer:run"] },
     { glob: "src/supervisor.ts", tags: ["layer:run"] },
     { glob: "src/cli.ts", tags: ["layer:entry"] },
@@ -42,6 +44,7 @@ export default {
   // archstrict.types.ts.
   declaredModules: [
     // Each directory and TypeScript source file directly in src/.
+    { name: "cache.ts", glob: "src/cache.ts", surface: "cache.ts" },
     { name: "checks.ts", glob: "src/checks.ts", surface: "checks.ts" },
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
     { name: "config.ts", glob: "src/config.ts", surface: "config.ts" },
@@ -52,12 +55,14 @@ export default {
     { name: "report.ts", glob: "src/report.ts", surface: "report.ts" },
     { name: "store.ts", glob: "src/store.ts", surface: "store.ts" },
     { name: "supervisor.ts", glob: "src/supervisor.ts", surface: "supervisor.ts" },
+    { name: "tree.ts", glob: "src/tree.ts", surface: "tree.ts" },
     // Each other top-level directory that holds TypeScript source, and each top-level TypeScript source file.
     { name: "vitest.config.ts", glob: "vitest.config.ts", surface: "vitest.config.ts" },
   ],
   // No frozen debt. A later violation in any of these fails check rather
   // than landing in the todo file.
   strict: [
+    "cache.ts",
     "checks.ts",
     "cli.ts",
     "config.ts",
@@ -68,6 +73,7 @@ export default {
     "report.ts",
     "store.ts",
     "supervisor.ts",
+    "tree.ts",
     "vitest.config.ts",
   ],
   edges: {
@@ -77,7 +83,7 @@ export default {
         sequence: { "": ["machine", "base", "run", "entry"] },
         direction: "downward-only",
         because:
-          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, and names.ts the pure glob and log-file naming; config, errors, processes, and store do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
+          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, cache.ts the pure cache keys and reuse lookup, and names.ts the pure glob and log-file naming; config, errors, processes, store, and tree do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
       },
     ],
   },

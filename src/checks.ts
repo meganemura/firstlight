@@ -2,6 +2,11 @@
 // The supervisor advances a check only through `advance`, and readers fold
 // events.jsonl through the same transition table, so the file can never
 // describe a path the machine does not allow. This module does no I/O.
+//
+// A result reused from an earlier run is the one step outside the table:
+// `passed` straight from `pending`, legal only on an event that names the
+// run it came from. Widening the table instead would let any check pass
+// without ever running.
 
 export type CheckStatus =
   | "pending"
@@ -36,6 +41,11 @@ export function canAdvance(from: CheckStatus, to: CheckStatus): boolean {
   return TRANSITIONS[from].includes(to);
 }
 
+export function canApply(from: CheckStatus, event: Pick<CheckEvent, "status" | "cached_from">): boolean {
+  if (event.cached_from !== undefined) return from === "pending" && event.status === "passed";
+  return canAdvance(from, event.status);
+}
+
 export interface CheckSpec {
   name: string;
   run: string;
@@ -51,6 +61,8 @@ export interface CheckEvent {
   exit_code?: number | null;
   at: string;
   elapsed_ms?: number;
+  // The run that ran the check; elapsed_ms is then that run's time.
+  cached_from?: string;
 }
 
 export type RunOutcome = "done" | "cancelled";
@@ -70,10 +82,11 @@ export interface CheckState {
   exit_code: number | null;
   started_at: string | null;
   elapsed_ms: number | null;
+  cached_from: string | null;
 }
 
 export function initialState(name: string): CheckState {
-  return { name, status: "pending", pid: null, exit_code: null, started_at: null, elapsed_ms: null };
+  return { name, status: "pending", pid: null, exit_code: null, started_at: null, elapsed_ms: null, cached_from: null };
 }
 
 export class IllegalTransition extends Error {
@@ -84,7 +97,7 @@ export class IllegalTransition extends Error {
 }
 
 export function advance(state: CheckState, event: CheckEvent): CheckState {
-  if (!canAdvance(state.status, event.status)) {
+  if (!canApply(state.status, event)) {
     throw new IllegalTransition(state.name, state.status, event.status);
   }
   return {
@@ -94,6 +107,7 @@ export function advance(state: CheckState, event: CheckEvent): CheckState {
     exit_code: event.exit_code !== undefined ? event.exit_code : state.exit_code,
     started_at: event.status === "running" ? event.at : state.started_at,
     elapsed_ms: event.elapsed_ms ?? state.elapsed_ms,
+    cached_from: event.cached_from ?? state.cached_from,
   };
 }
 
@@ -127,6 +141,7 @@ export interface CheckView {
   started_at: string | null;
   pid: number | null;
   orphan: boolean;
+  cached_from: string | null;
 }
 
 // Supervisor liveness is passed in rather than probed here, so the rule
@@ -144,6 +159,7 @@ export function presentChecks(run: FoldedRun, supervisorAlive: boolean): CheckVi
       started_at: state.started_at,
       pid: state.pid,
       orphan,
+      cached_from: state.cached_from,
     };
   });
 }

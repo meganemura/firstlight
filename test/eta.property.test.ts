@@ -34,6 +34,7 @@ test("time left is never negative, a pending check ends after its dependencies, 
           started_at: status === "running" ? new Date(NOW - ran).toISOString() : null,
           pid: null,
           orphan: status === "unknown",
+          cached_from: null,
         };
       });
       const typical = new Map<string, number>();
