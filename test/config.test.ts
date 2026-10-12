@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { onTestFinished, test } from "vitest";
 import { parseConfig, selectChecks } from "../src/config.ts";
 import { KEEP_RUNS, newRunId, RepoState } from "../src/store.ts";
 import { checkStatuses, cleanup, cli, makeRepo, parseLines } from "./helpers.ts";
@@ -58,7 +58,7 @@ test("results before any run, and an unknown command, print the envelope", async
   assert.deepEqual(unknown.body, { error: "unknown command: frobnicate", do: "run `firstlight --help` for the usage" });
 });
 
-test("without firstlight.json the package.json scripts become checks", async (t) => {
+test("without firstlight.json the package.json scripts become checks", async () => {
   const repo = makeRepo({
     "package.json": {
       name: "fixture",
@@ -66,7 +66,7 @@ test("without firstlight.json the package.json scripts become checks", async (t)
       scripts: { lint: "echo lint-ok", test: "echo test-ok", build: "exit 1" },
     },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run", "--json"]);
   assert.equal(run.code, 0, run.stderr);
@@ -75,9 +75,9 @@ test("without firstlight.json the package.json scripts become checks", async (t)
   assert.match(readFileSync(lint.log as string, "utf8"), /\nlint-ok\n/);
 });
 
-test("--help prints plain text and exits 0", async (t) => {
+test("--help prints plain text and exits 0", async () => {
   const repo = makeRepo({});
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
   const help = await cli(repo, ["--help"]);
   assert.equal(help.code, 0);
   assert.match(help.stdout, /^firstlight: run lint, typecheck, and tests in parallel/);

@@ -10,6 +10,20 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test \"test/*.test.ts\""
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "archstrict": "archstrict check",
+    "mutation": "stryker run"
+  },
+  "devDependencies": {
+    "@hegeldev/hegel": "0.4.5",
+    "@meganemura/depug": "0.1.3",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "@types/node": "26.5.1",
+    "archstrict": "0.1.0",
+    "stryker-agent-reporter": "0.1.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
   }
 }

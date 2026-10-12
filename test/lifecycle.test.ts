@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { onTestFinished, test } from "vitest";
 import {
   checkPid,
   cleanup,
@@ -17,9 +17,9 @@ const LONG_RUN = {
   "firstlight.json": { checks: { fail: { run: "exit 1" }, long: { run: "sleep 30" } } },
 };
 
-test("a second run cancels the checks of the first", async (t) => {
+test("a second run cancels the checks of the first", async () => {
   const repo = makeRepo(LONG_RUN);
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const first = await cli(repo, ["run"]);
   assert.equal(first.code, 1, first.stderr);
@@ -39,9 +39,9 @@ test("a second run cancels the checks of the first", async (t) => {
   assert.deepEqual({ ...events.at(-1)!, at: "<at>" }, { type: "run", status: "cancelled", at: "<at>" });
 });
 
-test("stop cancels running checks, and stop with nothing running exits 0", async (t) => {
+test("stop cancels running checks, and stop with nothing running exits 0", async () => {
   const repo = makeRepo(LONG_RUN);
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run"]);
   assert.equal(run.code, 1, run.stderr);
@@ -70,16 +70,16 @@ test("stop cancels running checks, and stop with nothing running exits 0", async
   assert.equal(again.stdout, "nothing running\n");
 
   const fresh = makeRepo(LONG_RUN);
-  t.after(() => cleanup(fresh));
+  onTestFinished(() => cleanup(fresh));
   const never = await cli(fresh, ["stop"]);
   assert.equal(never.code, 0, never.stderr);
   assert.equal(never.stdout, "nothing running\n");
 });
 
-test("a check whose supervisor died is unknown with orphan: true", async (t) => {
+test("a check whose supervisor died is unknown with orphan: true", async () => {
   const repo = makeRepo(LONG_RUN);
   let longPid: number | null = null;
-  t.after(() => cleanup(repo, [longPid]));
+  onTestFinished(() => cleanup(repo, [longPid]));
 
   const run = await cli(repo, ["run"]);
   assert.equal(run.code, 1, run.stderr);
@@ -105,9 +105,9 @@ test("a check whose supervisor died is unknown with orphan: true", async (t) => 
   assert.equal(isGroupAlive(longPid), true);
 });
 
-test("results exits 1 when a check was cancelled before it passed", async (t) => {
+test("results exits 1 when a check was cancelled before it passed", async () => {
   const repo = makeRepo({ "firstlight.json": { checks: { long: { run: "sleep 30" } } } });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const pending = cli(repo, ["run"]);
   const longPid = await waitFor("the long check to start", () => {

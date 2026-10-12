@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { onTestFinished, test } from "vitest";
 import { checkStatuses, cleanup, cli, currentRun, makeRepo, parseLines } from "./helpers.ts";
 
-test("run exits 0 with one summary line when every check passes", async (t) => {
+test("run exits 0 with one summary line when every check passes", async () => {
   const repo = makeRepo({
     "firstlight.json": {
       checks: { a: { run: "true" }, b: { run: "sleep 0.1" }, c: { run: "echo hi", after: ["a"] } },
     },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const result = await cli(repo, ["run"]);
   assert.equal(result.code, 0, result.stderr);
@@ -24,7 +24,7 @@ test("run exits 0 with one summary line when every check passes", async (t) => {
   );
 });
 
-test("run returns at the first failure while a slow check keeps running", async (t) => {
+test("run returns at the first failure while a slow check keeps running", async () => {
   const repo = makeRepo({
     "firstlight.json": {
       checks: {
@@ -33,7 +33,7 @@ test("run returns at the first failure while a slow check keeps running", async 
       },
     },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run"]);
   assert.equal(run.code, 1, run.stderr);
@@ -56,7 +56,7 @@ test("run returns at the first failure while a slow check keeps running", async 
   assert.equal(lines.at(-1)!.next, "firstlight run");
 });
 
-test("a check runs only after its dependency passes and is skipped when it fails", async (t) => {
+test("a check runs only after its dependency passes and is skipped when it fails", async () => {
   const repo = makeRepo({
     "firstlight.json": {
       checks: {
@@ -67,7 +67,7 @@ test("a check runs only after its dependency passes and is skipped when it fails
       },
     },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run"]);
   assert.equal(run.code, 1, run.stderr);
@@ -92,11 +92,11 @@ test("a check runs only after its dependency passes and is skipped when it fails
   assert.deepEqual(events.at(-1)!.status, "done");
 });
 
-test("a check past its timeoutSec is timed_out", async (t) => {
+test("a check past its timeoutSec is timed_out", async () => {
   const repo = makeRepo({
     "firstlight.json": { checks: { slow: { run: "sleep 5", timeoutSec: 0.3 } } },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run"]);
   assert.equal(run.code, 1, run.stderr);
@@ -110,7 +110,7 @@ test("a check past its timeoutSec is timed_out", async (t) => {
   assert.equal(slow!.exit_code, 143);
 });
 
-test("run with check names runs those and their after dependencies only", async (t) => {
+test("run with check names runs those and their after dependencies only", async () => {
   const repo = makeRepo({
     "firstlight.json": {
       checks: {
@@ -120,7 +120,7 @@ test("run with check names runs those and their after dependencies only", async 
       },
     },
   });
-  t.after(() => cleanup(repo));
+  onTestFinished(() => cleanup(repo));
 
   const run = await cli(repo, ["run", "test", "--json"]);
   assert.equal(run.code, 0, run.stderr);
