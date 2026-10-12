@@ -1,19 +1,23 @@
 // Which checks a repository has: firstlight.json, or the package.json
 // fallback, validated into CheckSpec values before anything runs. Also owns
-// the `after` graph: unknown names, cycles, and the transitive selection for
-// `firstlight run <check>...`. It reads files and never starts a process.
+// the `after` graph (unknown names, cycles, the transitive selection) and
+// what each argument of `firstlight run <arg>...` stands for: a configured
+// check, a package.json script or glob, or a shell command. It reads files
+// and never starts a process.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { CheckSpec } from "./checks.ts";
 import { AgentError, messageOf } from "./errors.ts";
+import { expandPattern, isPattern, shellQuote } from "./names.ts";
 
 export const CONFIG_FILE = "firstlight.json";
 export const DEFAULT_TIMEOUT_SEC = 600;
 export const FALLBACK_SCRIPTS = ["lint", "typecheck", "test", "archstrict"] as const;
 
-// A check name becomes `<name>.log` in the state directory, so it must be a
-// safe file name.
+// A configured name is one plain word, never whitespace or "*", so an
+// argument of `firstlight run` that names it cannot also read as a shell
+// command or a script glob.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const CHECK_KEYS = new Set(["run", "after", "timeoutSec"]);
 
@@ -28,12 +32,9 @@ export function loadConfig(root: string): Config {
   if (text !== null) {
     return { source: "firstlight.json", checks: parseConfig(text, configPath) };
   }
-  const pkgPath = path.join(root, "package.json");
-  const pkgText = readOptional(pkgPath);
-  if (pkgText !== null) {
-    const checks = fallbackChecks(pkgText, pkgPath);
-    if (checks.length > 0) return { source: "package.json", checks };
-  }
+  const scripts = readScripts(path.join(root, "package.json")) ?? [];
+  const checks = FALLBACK_SCRIPTS.filter((name) => scripts.includes(name)).map(scriptCheck);
+  if (checks.length > 0) return { source: "package.json", checks };
   throw new AgentError(
     `no checks found in ${root}: there is no ${CONFIG_FILE} and package.json has no ${FALLBACK_SCRIPTS.join(", ")} script`,
     `create ${configPath} like {"checks": {"test": {"run": "npm test"}}}, then run \`firstlight run\``,
@@ -132,25 +133,6 @@ function findCycle(checks: CheckSpec[], byName: Map<string, CheckSpec>): string[
   return null;
 }
 
-function fallbackChecks(text: string, file: string): CheckSpec[] {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch (err) {
-    throw new AgentError(
-      `${file} is not valid JSON (${messageOf(err)})`,
-      `fix ${file}, or create ${path.join(path.dirname(file), CONFIG_FILE)}`,
-    );
-  }
-  const scripts = isRecord(raw) && isRecord(raw.scripts) ? raw.scripts : {};
-  return FALLBACK_SCRIPTS.filter((name) => typeof scripts[name] === "string").map((name) => ({
-    name,
-    run: `npm run ${name}`,
-    after: [],
-    timeoutSec: DEFAULT_TIMEOUT_SEC,
-  }));
-}
-
 // Keeps config order, so output order follows the file the user wrote.
 export function selectChecks(checks: CheckSpec[], requested: string[]): CheckSpec[] {
   if (requested.length === 0) return checks;
@@ -170,6 +152,103 @@ export function selectChecks(checks: CheckSpec[], requested: string[]): CheckSpe
   };
   for (const name of requested) add(name);
   return checks.filter((check) => wanted.has(check.name));
+}
+
+// A word of `firstlight run` is a configured check first, then a
+// package.json script or glob. An argument with whitespace, or any argument
+// after `--`, is a shell command named by itself. Arguments keep their
+// order, and a configured check's `after` dependencies come just before it.
+export function resolveRun(root: string, args: readonly string[], commands: readonly string[]): CheckSpec[] {
+  const configPath = path.join(root, CONFIG_FILE);
+  const configText = readOptional(configPath);
+  const configured = configText === null ? [] : parseConfig(configText, configPath);
+  const byName = new Map(configured.map((check) => [check.name, check]));
+  let scripts: string[] | null | undefined;
+  const scriptNames = (): string[] | null => {
+    if (scripts === undefined) scripts = readScripts(path.join(root, "package.json"));
+    return scripts;
+  };
+
+  const picked: CheckSpec[] = [];
+  const add = (spec: CheckSpec): void => {
+    const same = picked.find((check) => check.name === spec.name);
+    if (same === undefined) {
+      picked.push(spec);
+    } else if (same.run !== spec.run) {
+      throw new AgentError(
+        `two checks are named "${spec.name}": one runs \`${same.run}\` and one runs \`${spec.run}\``,
+        "drop one of the two arguments, or rename the check in firstlight.json",
+      );
+    }
+  };
+  const addCommand = (command: string): void => {
+    if (command.trim().length === 0) {
+      throw new AgentError("an empty command was given to `firstlight run`", "drop the empty argument");
+    }
+    add(commandCheck(command));
+  };
+  const unknown: string[] = [];
+
+  for (const arg of args) {
+    if (/\s/u.test(arg)) {
+      addCommand(arg);
+    } else if (byName.has(arg)) {
+      for (const check of selectChecks(configured, [arg])) add(check);
+    } else if (isPattern(arg)) {
+      const available = scriptNames();
+      const matched = expandPattern(arg, available ?? []);
+      if (matched.length === 0) {
+        const why = available === null ? "there is no package.json" : `the scripts are: ${available.join(", ") || "(none)"}`;
+        throw new AgentError(
+          `no package.json script matches "${arg}"; ${why}`,
+          available === null || available.length === 0
+            ? `quote a shell command instead, like \`firstlight run "make test"\``
+            : `pick a pattern that matches one of: ${available.join(", ")}`,
+        );
+      }
+      for (const name of matched) add(byName.get(name) ?? scriptCheck(name));
+    } else if (scriptNames()?.includes(arg)) {
+      add(scriptCheck(arg));
+    } else {
+      unknown.push(arg);
+    }
+  }
+  for (const command of commands) addCommand(command);
+
+  if (unknown.length > 0) {
+    const available = scriptNames();
+    const choices = [
+      `configured checks: ${configured.length === 0 ? "(none)" : configured.map((check) => check.name).join(", ")}`,
+      available === null ? "no package.json" : `package.json scripts: ${available.length === 0 ? "(none)" : available.join(", ")}`,
+    ];
+    throw new AgentError(
+      `unknown check or script: ${unknown.join(", ")} (${choices.join("; ")})`,
+      `pick a check or script from that list, or run a shell command by quoting it, like \`firstlight run "make test"\`, or after --, like \`firstlight run -- ${shellQuote(unknown[0]!)}\``,
+    );
+  }
+  return picked;
+}
+
+export function scriptCheck(script: string): CheckSpec {
+  return { name: script, run: `npm run ${shellQuote(script)}`, after: [], timeoutSec: DEFAULT_TIMEOUT_SEC };
+}
+
+export function commandCheck(command: string): CheckSpec {
+  return { name: command, run: command, after: [], timeoutSec: DEFAULT_TIMEOUT_SEC };
+}
+
+// Script names in package.json order, or null when there is no package.json.
+function readScripts(file: string): string[] | null {
+  const text = readOptional(file);
+  if (text === null) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    throw new AgentError(`${file} is not valid JSON (${messageOf(err)})`, `fix ${file}, then rerun the command`);
+  }
+  const scripts = isRecord(raw) && isRecord(raw.scripts) ? raw.scripts : {};
+  return Object.keys(scripts).filter((name) => typeof scripts[name] === "string");
 }
 
 function invalid(file: string, reason: string): AgentError {

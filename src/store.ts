@@ -33,6 +33,7 @@ import {
 } from "./checks.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { typicalDurations, type PastRun } from "./eta.ts";
+import { logFileNames } from "./names.ts";
 import { isPidAlive } from "./processes.ts";
 
 export const KEEP_RUNS = 20;
@@ -218,8 +219,12 @@ export class RepoState {
   }
 }
 
-export function logPath(runDir: string, check: string): string {
-  return path.join(runDir, `${check}.log`);
+// Derived from the run's own check list on every read, so run.json needs no
+// field for it and a run written before script and command checks existed
+// keeps `<name>.log`.
+export function logPaths(runDir: string, checks: readonly CheckSpec[]): Map<string, string> {
+  const files = logFileNames(checks.map((check) => check.name));
+  return new Map([...files].map(([name, file]) => [name, path.join(runDir, file)]));
 }
 
 export function eventsPath(runDir: string): string {

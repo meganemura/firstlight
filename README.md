@@ -2,14 +2,40 @@
 
 firstlight is a parallel check runner for coding agents. An agent runs lint, typecheck, and tests through it.
 
-firstlight starts every configured check at the same time and returns as soon as the first one fails, so the agent can start to fix it. The other checks keep running in the background, and the agent reads their results later. When the agent runs `firstlight run` again, firstlight first stops the checks that are still running from the previous run, then starts over.
+firstlight starts every check at the same time and returns as soon as the first one fails, so the agent can start to fix it. The other checks keep running in the background, and the agent reads their results later. When the agent runs `firstlight run` again, firstlight first stops the checks that are still running from the previous run, then starts over.
+
+`firstlight run` reads like npm-run-all's `run-p`, the parallel runner:
+
+```sh
+firstlight run lint typecheck test
+firstlight run "lint:*" test
+```
+
+A check is any shell command, so a project does not need Node or a `package.json`. Node is only needed to run firstlight itself. A Ruby project can pass its commands directly:
+
+```sh
+firstlight run "bundle exec rubocop" "bundle exec rspec"
+```
+
+or keep them in `firstlight.json`:
+
+```json
+{
+  "checks": {
+    "rubocop": { "run": "bundle exec rubocop" },
+    "rspec": { "run": "bundle exec rspec", "timeoutSec": 900 }
+  }
+}
+```
+
+and run `firstlight run`, or `firstlight run rspec` for one of them.
 
 ## Agent flow
 
 1. Start the checks:
 
    ```sh
-   firstlight run
+   firstlight run lint typecheck test
    ```
 
    It returns at the first failed or timed-out check, with the last 40 lines of that check's log, the status of every other check, and the next command. If every check passes, it prints one line and exits 0.
@@ -25,10 +51,25 @@ firstlight starts every configured check at the same time and returns as soon as
 4. Run again. This cancels anything left from step 1:
 
    ```sh
-   firstlight run
+   firstlight run lint typecheck test
    ```
 
-`firstlight run test` runs only `test` and the checks it is `after`.
+## Arguments of `run`
+
+`run` is the parallel `run-p` equivalent. Each argument is one of:
+
+| Argument | Meaning |
+| --- | --- |
+| a word, like `test` | The check of that name in `firstlight.json`, together with the checks it is `after`. Without such a check, the `package.json` script of that name, run as `npm run test`. |
+| a pattern, like `"lint:*"` | Every `package.json` script it matches, in `package.json` order. As in npm-run-all, `*` matches inside one `:`-separated segment and `**` matches across segments: `lint:*` matches `lint:js` and `lint:css` but not `lint:js:fix`, and `test:**` matches all three levels. Only `*` is special. Quote a pattern so the shell does not expand it. |
+| an argument with whitespace, like `"bundle exec rspec"` | A shell command. Its check name is the command itself. |
+| any argument after `--` | A shell command, one per argument, even a single word: `firstlight run lint -- make "bundle exec rspec"` runs the `lint` check or script, `make`, and `bundle exec rspec`. Put `--cwd` and `--json` before `--`. |
+
+The checks run in argument order, and a configured check's `after` checks come just before it. An argument repeated, or a pattern that matches a name already given, runs once. Two different checks under one name are refused. A word that is neither a configured check nor a script, and a pattern that matches no script, stop firstlight with the error envelope, which lists the configured checks and the scripts.
+
+With no arguments, `firstlight run` runs every check in `firstlight.json`, or, without that file, the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` that exist.
+
+firstlight has no sequential `run-s` mode and none of npm-run-all's other flags. To run a check only after another passes, give it `after` in `firstlight.json`.
 
 ## Install
 
@@ -60,7 +101,7 @@ firstlight has no runtime dependencies, so running it from a checkout needs no i
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
 
-A check name must match `[A-Za-z0-9][A-Za-z0-9._-]*`, because it is also the log file name. firstlight rejects unknown keys, unknown `after` names, and cycles before it starts anything.
+A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, and cycles before it starts anything.
 
 Without `firstlight.json`, each of the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` that exists becomes a check that runs `npm run <name>`, with no `after`.
 
@@ -69,7 +110,7 @@ The repository root is `git rev-parse --show-toplevel` from the current director
 ## Commands
 
 ```text
-firstlight run [check...] [--cwd DIR] [--json]
+firstlight run [name|pattern|"command"...] [-- command...] [--cwd DIR] [--json]
 firstlight results [--wait] [--cwd DIR] [--json]
 firstlight stop [--cwd DIR] [--json]
 firstlight --help
@@ -91,7 +132,7 @@ run 01K...: 1 failed, 2 running
 next: firstlight results --wait (about 12s left)
 ```
 
-The estimate comes from the `elapsed_ms` of the newest `passed` result of a check with the same name and the same `run` command in an earlier kept run. A failed, timed-out, or cancelled result does not count, because it stopped early. A running check has that duration minus the time it has run. When it has already run longer, the line says `past its usual 9.0s` instead. A pending check has its own duration plus the longest time left of its `after` checks. The run has the longest time left of its unfinished checks. When a check, or one of its `after` checks, has no such history, firstlight shows no estimate for it, and none for the run. Times below 10 seconds keep one decimal; longer times are whole seconds.
+The estimate comes from the `elapsed_ms` of the newest `passed` result of a check with the same name and the same `run` command in an earlier kept run. This holds for script and command checks too: `lint:js` is the command `npm run lint:js` every time. A failed, timed-out, or cancelled result does not count, because it stopped early. A running check has that duration minus the time it has run. When it has already run longer, the line says `past its usual 9.0s` instead. A pending check has its own duration plus the longest time left of its `after` checks. The run has the longest time left of its unfinished checks. When a check, or one of its `after` checks, has no such history, firstlight shows no estimate for it, and none for the run. Times below 10 seconds keep one decimal; longer times are whole seconds.
 
 A check is `pending`, `running`, `passed`, `failed`, `timed_out`, `cancelled`, or `skipped`. A check is `unknown`, with `orphan: true`, when its supervisor process is gone before the check finished. firstlight does not invent an exit code for it. A check killed by a signal has the exit code 128 plus the signal number.
 
@@ -133,6 +174,8 @@ ${XDG_STATE_HOME:-~/.local/state}/firstlight/<repo-key>/
   runs/<run-id>/<check>.log   stdout and stderr of one check
   runs/<run-id>/supervisor.log  stderr of the supervisor itself
 ```
+
+The log file name of a check is its name with each character outside `[A-Za-z0-9._-]` replaced by `_`, cut to 100 characters: `lint:js` writes `lint_js.log`, and `bundle exec rspec` writes `bundle_exec_rspec.log`. The name in the output and in `--json` stays as written. When two checks of one run would share a file name, ignoring case, or a check would take `supervisor.log`, one of them gets `-2`, `-3`, and so on; a name that is already a safe file name keeps its own file. The `log` field in `--json` always gives the real path.
 
 `<repo-key>` is the first 16 hex characters of the SHA-256 of the repository root path. Run ids sort by start time. firstlight keeps the newest 20 runs.
 

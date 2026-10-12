@@ -5,7 +5,7 @@
 
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
-import { logPath, tailLines, type RunSnapshot } from "./store.ts";
+import { logPaths, tailLines, type RunSnapshot } from "./store.ts";
 
 export const TAIL_LINES = 40;
 
@@ -40,6 +40,7 @@ function showsLog(view: CheckView): boolean {
 }
 
 export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEta): string {
+  const logs = logPaths(snapshot.dir, snapshot.run.checks);
   const lines = snapshot.checks.map((view) => {
     const checkEta = etaOf(eta, view);
     const line: Record<string, unknown> = {
@@ -48,12 +49,12 @@ export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEt
       status: view.status,
       exit_code: view.exit_code,
       elapsed_ms: view.elapsed_ms,
-      log: logPath(snapshot.dir, view.name),
+      log: logs.get(view.name),
       eta_ms: roundMs(checkEta.eta_ms),
       overdue: checkEta.overdue,
     };
     if (view.orphan) line.orphan = true;
-    if (showsLog(view)) line.tail = tailLines(logPath(snapshot.dir, view.name), TAIL_LINES);
+    if (showsLog(view)) line.tail = tailLines(logs.get(view.name)!, TAIL_LINES);
     return JSON.stringify(line);
   });
   lines.push(JSON.stringify(summarize(snapshot, next, eta)));
@@ -64,6 +65,7 @@ export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEt
 // that failed first; the others get one status line each.
 export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, focus: string | null = null): string {
   const out: string[] = [];
+  const logs = logPaths(snapshot.dir, snapshot.run.checks);
   const ordered =
     focus === null
       ? snapshot.checks
@@ -71,7 +73,7 @@ export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, fo
   for (const view of ordered) {
     out.push(statusLine(snapshot, view, eta));
     if (showsLog(view) && (focus === null || view.name === focus)) {
-      const file = logPath(snapshot.dir, view.name);
+      const file = logs.get(view.name)!;
       const tail = tailLines(file, TAIL_LINES);
       out.push(`  log: ${file}`);
       if (tail.length === 0) out.push("    (no output)");

@@ -19,7 +19,7 @@ import {
   type RunOutcome,
 } from "./checks.ts";
 import { signalGroup } from "./processes.ts";
-import { appendEvent, logPath, type RunRecord } from "./store.ts";
+import { appendEvent, logPaths, type RunRecord } from "./store.ts";
 
 export const SUPERVISE_COMMAND = "__supervise";
 export const GRACE_MS = 3_000;
@@ -41,6 +41,7 @@ export function supervise(runDir: string): void {
 class Supervisor {
   private readonly run: RunRecord;
   private readonly runDir: string;
+  private readonly logs: Map<string, string>;
   private readonly states = new Map<string, CheckState>();
   private readonly running = new Map<string, Running>();
   private stopping = false;
@@ -49,6 +50,7 @@ class Supervisor {
   constructor(run: RunRecord, runDir: string) {
     this.run = run;
     this.runDir = runDir;
+    this.logs = logPaths(runDir, run.checks);
     for (const check of run.checks) this.states.set(check.name, initialState(check.name));
   }
 
@@ -94,7 +96,7 @@ class Supervisor {
   }
 
   private launch(check: CheckSpec): void {
-    const log = logPath(this.runDir, check.name);
+    const log = this.logs.get(check.name)!;
     const fd = openSync(log, "a");
     let child;
     try {
