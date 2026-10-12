@@ -20,7 +20,7 @@ test("run exits 0 with one summary line when every check passes", async () => {
   const summary = parseLines(json.stdout).at(-1)!;
   assert.deepEqual(
     { ...summary, run: "<id>" },
-    { type: "summary", run: "<id>", failed: [], running: [], passed: ["a", "b", "c"], cancelled: [], next: null },
+    { type: "summary", run: "<id>", failed: [], running: [], passed: ["a", "b", "c"], cancelled: [], next: null, eta_ms: 0 },
   );
 });
 
@@ -54,6 +54,41 @@ test("run returns at the first failure while a slow check keeps running", async 
   assert.equal(slow.exit_code, 0);
   assert.equal(readFileSync(slow.log as string, "utf8"), "slow-done\n");
   assert.equal(lines.at(-1)!.next, "firstlight run");
+});
+
+test("run estimates the time left from the last pass of the same check, and only once one exists", async () => {
+  const repo = makeRepo({
+    "firstlight.json": {
+      checks: { quick: { run: "sleep 0.2; exit 1" }, slow: { run: "sleep 1.5" } },
+    },
+  });
+  onTestFinished(() => cleanup(repo));
+
+  const first = await cli(repo, ["run"]);
+  assert.equal(first.code, 1, first.stderr);
+  assert.match(first.stdout, /\nslow running \(\d+\.\ds\)\n/);
+  assert.match(first.stdout, /\nnext: firstlight results --wait\n$/);
+  assert.doesNotMatch(first.stdout, /left|usual/);
+  assert.equal((await cli(repo, ["results", "--wait"])).code, 1);
+
+  const second = await cli(repo, ["run"]);
+  assert.equal(second.code, 1, second.stderr);
+  const line = /\nslow running \(\d+\.\ds, about (\d+\.\d)s left\)\n/.exec(second.stdout);
+  assert.ok(line !== null, second.stdout);
+  const left = Number(line[1]);
+  assert.ok(left > 0 && left <= 1.6, `slow has ${left}s left`);
+  assert.match(second.stdout, /\nnext: firstlight results --wait \(about \d+\.\ds left\)\n$/);
+  assert.equal((await cli(repo, ["results", "--wait"])).code, 1);
+
+  const json = await cli(repo, ["run", "--json"]);
+  assert.equal(json.code, 1, json.stderr);
+  const lines = parseLines(json.stdout);
+  const quick = lines.find((entry) => entry.name === "quick")!;
+  assert.deepEqual([quick.eta_ms, quick.overdue], [0, false]);
+  const slow = lines.find((entry) => entry.name === "slow")!;
+  assert.equal(slow.overdue, false);
+  assert.ok(typeof slow.eta_ms === "number" && slow.eta_ms > 0 && slow.eta_ms <= 1_600, `slow eta_ms ${slow.eta_ms}`);
+  assert.equal(lines.at(-1)!.eta_ms, slow.eta_ms);
 });
 
 test("a check runs only after its dependency passes and is skipped when it fails", async () => {

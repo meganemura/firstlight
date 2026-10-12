@@ -32,6 +32,7 @@ import {
   type RunOutcome,
 } from "./checks.ts";
 import { AgentError, messageOf } from "./errors.ts";
+import { typicalDurations, type PastRun } from "./eta.ts";
 import { isPidAlive } from "./processes.ts";
 
 export const KEEP_RUNS = 20;
@@ -177,6 +178,25 @@ export class RepoState {
       }
       throw err;
     }
+  }
+
+  // Only the kept runs older than `run` are read, so the history costs no
+  // file of its own. An earlier run that no longer reads cleanly is history
+  // with nothing to say, not a reason to fail the current command.
+  typicalDurations(run: RunRecord): Map<string, number> {
+    const past: PastRun[] = [];
+    for (const id of this.runIds()) {
+      if (id >= run.id) continue;
+      try {
+        const record = this.readRun(id);
+        const names = record.checks.map((check) => check.name);
+        const folded = foldEvents(names, readEvents(eventsPath(this.runDir(id))));
+        past.push({ checks: record.checks, states: folded.checks });
+      } catch {
+        continue;
+      }
+    }
+    return typicalDurations(run.checks, past);
   }
 
   // Newest first. Run ids sort by creation time.

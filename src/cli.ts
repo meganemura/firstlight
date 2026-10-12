@@ -12,6 +12,7 @@ import { parseArgs } from "node:util";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { loadConfig, selectChecks } from "./config.ts";
 import { AgentError, exitWithEnvelope } from "./errors.ts";
+import { estimate, type RunEta } from "./eta.ts";
 import { signalGroup, signalPid, sleep } from "./processes.ts";
 import { allPassedText, jsonLines, text } from "./report.ts";
 import { RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
@@ -33,6 +34,11 @@ run      Stop the previous run if it is still going, start every check (or
          the first failed or timed-out check. The other checks keep running.
 results  Report the latest run. --wait blocks until every check is done.
 stop     Cancel the checks still running. Does nothing when none are.
+
+A running or pending check shows about how long it has left once an
+earlier kept run passed the same check with the same command, for example
+"test running (3.5s, about 8.0s left)". The "next:" line shows the time
+left for the whole run. Without that history, no estimate is shown.
 
 Checks come from firstlight.json at the repository root:
   {"checks": {"build": {"run": "npm run build"},
@@ -147,23 +153,25 @@ async function runCommand(ctx: Context, names: string[]): Promise<number> {
   ctx.state.writeRun({ ...run, supervisor_pid: child.pid });
   ctx.state.setCurrent(run.id);
   ctx.state.prune();
+  const typical = ctx.state.typicalDurations(run);
 
   for (;;) {
     const snapshot = ctx.state.snapshot(run.id);
+    const eta = etaOf(snapshot, typical);
     const first = firstFailure(snapshot.checks);
     if (first !== null) {
       const next = snapshot.checks.every(isSettled) ? cmd(ctx, "run") : cmd(ctx, "results --wait");
-      out(ctx.json ? jsonLines(snapshot, next) : text(snapshot, next, first.name));
+      out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta, first.name));
       return 1;
     }
     if (snapshot.checks.every(isSettled)) {
       if (snapshot.checks.every((view) => view.status === "passed")) {
-        out(ctx.json ? jsonLines(snapshot, null) : allPassedText(snapshot));
+        out(ctx.json ? jsonLines(snapshot, null, eta) : allPassedText(snapshot));
         return 0;
       }
       const superseded = ctx.state.currentId() !== run.id;
       const next = superseded ? cmd(ctx, "results --wait") : cmd(ctx, "run");
-      out(ctx.json ? jsonLines(snapshot, next) : text(snapshot, next));
+      out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
       return 1;
     }
     await sleep(POLL_MS);
@@ -180,7 +188,9 @@ async function resultsCommand(ctx: Context, wait: boolean): Promise<number> {
     await sleep(POLL_MS);
     snapshot = ctx.state.snapshot(id);
   }
-  out(ctx.json ? jsonLines(snapshot, nextFor(ctx, snapshot)) : text(snapshot, nextFor(ctx, snapshot)));
+  const eta = etaOf(snapshot, ctx.state.typicalDurations(snapshot.run));
+  const next = nextFor(ctx, snapshot);
+  out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
   // A cancelled check proved nothing, so it does not count as a pass.
   const unproven = snapshot.checks.some((view) => {
     const bucket = bucketOf(view.status);
@@ -194,7 +204,7 @@ async function stopCommand(ctx: Context): Promise<number> {
   const stopped = id === null ? false : await stopRun(ctx.state, id);
   if (!stopped || id === null) {
     if (ctx.json) {
-      out(`${JSON.stringify({ type: "summary", run: id, failed: [], running: [], passed: [], cancelled: [], next: null })}\n`);
+      out(`${JSON.stringify({ type: "summary", run: id, failed: [], running: [], passed: [], cancelled: [], next: null, eta_ms: 0 })}\n`);
     } else {
       out("nothing running\n");
     }
@@ -202,7 +212,8 @@ async function stopCommand(ctx: Context): Promise<number> {
   }
   const snapshot = ctx.state.snapshot(id);
   const next = cmd(ctx, "run");
-  out(ctx.json ? jsonLines(snapshot, next) : `stopped run ${id}\n${text(snapshot, next)}`);
+  const eta = etaOf(snapshot, ctx.state.typicalDurations(snapshot.run));
+  out(ctx.json ? jsonLines(snapshot, next, eta) : `stopped run ${id}\n${text(snapshot, next, eta)}`);
   return 0;
 }
 
@@ -232,6 +243,10 @@ function firstFailure(views: CheckView[]): CheckView | null {
   const endOf = (view: CheckView) => Date.parse(view.started_at ?? "") + (view.elapsed_ms ?? 0);
   failed.sort((a, b) => endOf(a) - endOf(b));
   return failed[0] ?? null;
+}
+
+function etaOf(snapshot: RunSnapshot, typical: ReadonlyMap<string, number>): RunEta {
+  return estimate(snapshot.checks, snapshot.run.checks, typical, Date.now());
 }
 
 function nextFor(ctx: Context, snapshot: RunSnapshot): string | null {

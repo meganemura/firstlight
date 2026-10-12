@@ -79,16 +79,31 @@ firstlight --help
 - `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the log path and the last 40 log lines. `--wait` blocks until every check is done.
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
 
+A `running` or `pending` check shows about how long it has left, and the `next: firstlight results --wait` line shows the time left for the whole run, so the agent knows when to pull the rest:
+
+```text
+lint failed (exit 1, 0.4s)
+  log: /.../lint.log
+    src/a.ts:3:1 unused variable x
+test running (3.5s, about 8.0s left)
+types pending (about 12s left)
+run 01K...: 1 failed, 2 running
+next: firstlight results --wait (about 12s left)
+```
+
+The estimate comes from the `elapsed_ms` of the newest `passed` result of a check with the same name and the same `run` command in an earlier kept run. A failed, timed-out, or cancelled result does not count, because it stopped early. A running check has that duration minus the time it has run. When it has already run longer, the line says `past its usual 9.0s` instead. A pending check has its own duration plus the longest time left of its `after` checks. The run has the longest time left of its unfinished checks. When a check, or one of its `after` checks, has no such history, firstlight shows no estimate for it, and none for the run. Times below 10 seconds keep one decimal; longer times are whole seconds.
+
 A check is `pending`, `running`, `passed`, `failed`, `timed_out`, `cancelled`, or `skipped`. A check is `unknown`, with `orphan: true`, when its supervisor process is gone before the check finished. firstlight does not invent an exit code for it. A check killed by a signal has the exit code 128 plus the signal number.
 
 The default output is short plain text with no colors. `--json` prints JSON Lines: one object per check, then one summary:
 
 ```json
-{"type":"check","name":"lint","status":"failed","exit_code":1,"elapsed_ms":205,"log":"/.../lint.log","tail":["src/a.ts:3:1 unused variable x"]}
-{"type":"summary","run":"01K...","failed":["lint"],"running":["test"],"passed":["build"],"cancelled":[],"next":"firstlight results --wait"}
+{"type":"check","name":"lint","status":"failed","exit_code":1,"elapsed_ms":205,"log":"/.../lint.log","eta_ms":0,"overdue":false,"tail":["src/a.ts:3:1 unused variable x"]}
+{"type":"check","name":"test","status":"running","exit_code":null,"elapsed_ms":null,"log":"/.../test.log","eta_ms":8012,"overdue":false}
+{"type":"summary","run":"01K...","failed":["lint"],"running":["test"],"passed":["build"],"cancelled":[],"next":"firstlight results --wait","eta_ms":8012}
 ```
 
-`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`.
+`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
 
 ## Exit codes
 
@@ -126,7 +141,7 @@ Each run has one detached supervisor process. It starts the checks, waits on the
 ## Non-goals for v0.1
 
 - No parsing of diagnostics. firstlight shows the log tail as it is.
-- No cache. Every run starts every selected check.
+- No cache. Every run starts every selected check. Earlier runs only feed the time-left estimate.
 - No daemon, no queue, and no watch mode.
 
 ## Development

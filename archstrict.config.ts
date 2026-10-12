@@ -27,6 +27,7 @@ export default {
   // one, never a higher one.
   classify: [
     { glob: "src/checks.ts", tags: ["layer:machine"] },
+    { glob: "src/eta.ts", tags: ["layer:machine"] },
     { glob: "src/config.ts", tags: ["layer:base"] },
     { glob: "src/errors.ts", tags: ["layer:base"] },
     { glob: "src/processes.ts", tags: ["layer:base"] },
@@ -43,6 +44,7 @@ export default {
     { name: "checks.ts", glob: "src/checks.ts", surface: "checks.ts" },
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
     { name: "config.ts", glob: "src/config.ts", surface: "config.ts" },
+    { name: "eta.ts", glob: "src/eta.ts", surface: "eta.ts" },
     { name: "errors.ts", glob: "src/errors.ts", surface: "errors.ts" },
     { name: "processes.ts", glob: "src/processes.ts", surface: "processes.ts" },
     { name: "report.ts", glob: "src/report.ts", surface: "report.ts" },
@@ -58,6 +60,7 @@ export default {
     "cli.ts",
     "config.ts",
     "errors.ts",
+    "eta.ts",
     "processes.ts",
     "report.ts",
     "store.ts",
@@ -71,7 +74,7 @@ export default {
         sequence: { "": ["machine", "base", "run", "entry"] },
         direction: "downward-only",
         because:
-          "checks.ts is the pure state machine everything else folds through; config, errors, processes, and store do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
+          "checks.ts is the pure state machine everything else folds through, and eta.ts the pure estimate on top of it; config, errors, processes, and store do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
       },
     ],
   },

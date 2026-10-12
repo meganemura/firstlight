@@ -15,13 +15,14 @@ The user-facing description is in `README.md`.
 - `src/cli.ts`: the entry point. It parses arguments, runs the commands, picks exit codes and next commands, and starts the supervisor.
 - `src/supervisor.ts`: the detached per-run supervisor. It is `src/cli.ts` started again with the hidden `__supervise <run dir>` subcommand. It is the only writer of `events.jsonl`.
 - `src/checks.ts`: the check status state machine, the event types, and the fold from events to the status of each check, including the `unknown`/`orphan` rule. No I/O.
+- `src/eta.ts`: the time-left estimate, from the newest pass of the same check in an earlier run. No I/O.
 - `src/config.ts`: `firstlight.json` and the `package.json` fallback, validation, the `after` graph, and check selection.
-- `src/store.ts`: state under `$XDG_STATE_HOME/firstlight/<repo-key>/`: run ids, `run.json`, `events.jsonl`, `current`, logs, and pruning.
+- `src/store.ts`: state under `$XDG_STATE_HOME/firstlight/<repo-key>/`: run ids, `run.json`, `events.jsonl`, `current`, logs, pruning, and the usual durations read from the kept runs.
 - `src/processes.ts`: pid liveness and process-group signals.
 - `src/report.ts`: plain text and JSON Lines output.
 - `src/errors.ts`: the `{"error","do"}` envelope.
-- `test/*.test.ts`: vitest tests. Most run the real CLI as a child process against temporary git repositories, each with its own `XDG_STATE_HOME`. `test/helpers.ts` holds the fixtures. `test/*.property.test.ts` are Hegel property tests of the pure parts: the state machine, `after` validation, and run ids.
-- `archstrict.config.ts`: the module boundaries and the layer order, `checks.ts` at the bottom, then `config.ts`, `errors.ts`, `processes.ts`, and `store.ts`, then `report.ts` and `supervisor.ts`, then `cli.ts`. Every module is strict, and `archstrict.todo.json` is empty.
+- `test/*.test.ts`: vitest tests. Most run the real CLI as a child process against temporary git repositories, each with its own `XDG_STATE_HOME`. `test/helpers.ts` holds the fixtures. `test/*.property.test.ts` are Hegel property tests of the pure parts: the state machine, `after` validation, run ids, and the time-left estimate.
+- `archstrict.config.ts`: the module boundaries and the layer order, `checks.ts` and `eta.ts` at the bottom, then `config.ts`, `errors.ts`, `processes.ts`, and `store.ts`, then `report.ts` and `supervisor.ts`, then `cli.ts`. Every module is strict, and `archstrict.todo.json` is empty.
 - `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`.
 - `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
 

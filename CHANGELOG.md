@@ -12,6 +12,7 @@ The first version of firstlight.
 - Without `firstlight.json`, the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` become checks.
 - A detached supervisor per run starts the checks, each in its own process group, and records every status change in `events.jsonl` under `$XDG_STATE_HOME/firstlight/`. Nothing is written into the checked repository. The newest 20 runs are kept.
 - If the supervisor dies before a check finishes, that check is reported as `unknown` with `orphan: true`, and no exit code is invented.
+- A running or pending check shows about how long it has left, and the `next: firstlight results --wait` line shows the time left for the whole run. The estimate comes from the newest pass of the same check, with the same `run` command, in the kept runs. A running check past that duration says `past its usual` instead. Without that history, no estimate is shown. In `--json`, each check has `eta_ms` and `overdue`, and the summary has `eta_ms`.
 - `--json` prints JSON Lines: one object per check and one summary. A failure of firstlight itself prints `{"error","do"}` on stderr and exits 1.
 
 Development:
