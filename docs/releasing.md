@@ -10,17 +10,15 @@ After `npm publish` succeeds, a second job creates the GitHub release for that t
 
 An environment and a trusted publisher create no state in this repository; they exist only in GitHub's and npm's own settings. Create them once, using the values below, before the first release.
 
-## Bootstrap: not done yet
+## Bootstrap: done with a placeholder, except the last step
 
-npm lets a trusted publisher be added only to a package that already exists. The name `firstlight` is not on npm yet, so the first release needs these steps, in this order. Each one is the owner's to run.
+npm lets a trusted publisher be added only to a package that already exists. The bootstrap for this package:
 
-1. Publish a placeholder `0.0.1` from a local `npm login` session. The placeholder holds the package name and no code: a directory with only `package.json` (name `firstlight`, version `0.0.1`, the `repository` field of this repository's `package.json`, and no `bin`, `scripts`, or `files`), `README.md` (one paragraph that says the version holds no code and names the first usable version), and `LICENSE`. Run `npm pack --dry-run` there first and read the file list: those three files and nothing else. Do not create an access token for it.
-2. Add the GitHub Actions trusted publisher on npmjs.com, with the values under "Trusted publisher" below.
-3. Create the GitHub Environment `publish` with required reviewers.
-4. Release the first usable version through "Each version" below. It is the first publish through OIDC, with provenance. Then, in the package settings on npmjs.com, require two-factor authentication and disallow token publishing. The trusted publisher keeps working. The placeholder `0.0.1` stays as it is; its own README says it holds no code.
-5. Update this section to say the bootstrap is done, with the dates.
+1. On 2026-10-12, the owner published a placeholder `0.0.1` from a local `npm login` session. It holds the package name and no code: `package.json`, `README.md`, and `LICENSE`. No access token was created for it. A `0.0.0-stage` version from the same session is also on npm; it is not `latest`, and it stays as it is.
+2. On 2026-10-12, the owner added the GitHub Actions trusted publisher on npmjs.com, with the values under "Trusted publisher" below, and created the GitHub Environment `publish` with required reviewers.
+3. Still to do: `0.1.0`, the first usable version, is the first publish through OIDC, with provenance. After it succeeds, in the package settings on npmjs.com, require two-factor authentication and disallow token publishing, then update this section with the date.
 
-After the bootstrap, every `v*` tag publishes through OIDC alone. A manual publish is needed again only if the package is deleted from npm.
+Do not repeat steps 1 and 2. A manual publish is needed again only if the package is deleted from npm.
 
 ## Trusted publisher
 
