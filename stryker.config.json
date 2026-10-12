@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "agent"],
+  "appendPlugins": ["stryker-agent-reporter"],
+  "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/supervisor.ts"],
+  "mutate_comment": "The tests reach cli.ts and supervisor.ts only through child processes, which never see the active mutant, so their mutants could only report no coverage.",
+  "disableTypeChecks": "src/**/*.ts",
+  "ignorePatterns": ["/tmp", "/reports", "/.hegel"],
+  "cleanTempDir": true
+}
