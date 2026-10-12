@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { onTestFinished, test } from "vitest";
-import { parseConfig, selectChecks } from "../src/config.ts";
+import { parseConfig, selectChecks, withParsers } from "../src/config.ts";
 import { KEEP_RUNS, newRunId, RepoState } from "../src/store.ts";
 import { checkStatuses, cleanup, cli, makeRepo, parseLines } from "./helpers.ts";
 
@@ -101,6 +101,42 @@ test("check selection pulls in transitive after dependencies in config order", (
       { name: "build", run: "b", after: [], timeoutSec: 600 },
       { name: "gen", run: "g", after: ["build"], timeoutSec: 600 },
       { name: "test", run: "t", after: ["gen"], timeoutSec: 30 },
+    ],
+  );
+});
+
+test("an unknown parser is rejected with the error envelope", async () => {
+  const { root, result, body } = await envelope({
+    "firstlight.json": { checks: { a: { run: "true", parser: "jest" } } },
+  });
+  assert.equal(result.code, 1);
+  assert.deepEqual(body, {
+    error: 'invalid firstlight.json: check "a" has "parser" "jest"; allowed values are tsc, vitest, node-test, archstrict, none',
+    do: `fix ${root}/firstlight.json, then rerun the command`,
+  });
+});
+
+test("a parser in firstlight.json wins over inference, and none turns inference off", () => {
+  const checks = parseConfig(
+    JSON.stringify({
+      checks: {
+        named: { run: "make types", parser: "tsc" },
+        off: { run: "tsc --noEmit", parser: "none" },
+        inferred: { run: "npm run unit" },
+        plain: { run: "make" },
+      },
+    }),
+    "firstlight.json",
+  );
+  const repo = makeRepo({ "package.json": { scripts: { unit: "node --test" } } });
+  onTestFinished(() => cleanup(repo));
+  assert.deepEqual(
+    withParsers(repo.root, checks).map((check) => [check.name, check.parser]),
+    [
+      ["named", "tsc"],
+      ["off", null],
+      ["inferred", "node-test"],
+      ["plain", null],
     ],
   );
 });

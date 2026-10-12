@@ -1,0 +1,12 @@
+
+> fx@1.0.0 typecheck
+> tsc --noEmit -p .
+
+src/math.ts(5,14): error TS2322: Type 'number' is not assignable to type 'string'.
+src/math.ts(7,14): error TS2304: Cannot find name 'c'.
+src/math.ts(10,38): error TS2322: Type 'number' is not assignable to type 'string'.
+src/math.ts(11,14): error TS2322: Type '(a: { x: number; }) => void' is not assignable to type '(a: { x: string; }) => void'.
+  Types of parameters 'a' and 'a' are incompatible.
+    Type '{ x: string; }' is not assignable to type '{ x: number; }'.
+      Types of property 'x' are incompatible.
+        Type 'string' is not assignable to type 'number'.

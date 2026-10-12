@@ -1,0 +1,100 @@
+
+> fx@1.0.0 nodetest
+> node --test "ntest/*.test.ts"
+
+▶ mul
+  ✖ multiplies two numbers (1.779221ms)
+  ▶ nested
+    ✖ deep equal (1.501314ms)
+  ✖ nested (1.773468ms)
+✖ mul (4.839811ms)
+✖ parse throws on empty input (0.163129ms)
+✔ passes (0.192688ms)
+✖ rejects (0.842871ms)
+ℹ tests 5
+ℹ suites 2
+ℹ pass 1
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 138.268333
+
+✖ failing tests:
+
+test at ntest/calc.test.ts:6:3
+✖ multiplies two numbers (1.779221ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  7 !== 6
+  
+      at TestContext.<anonymous> (file:///repo/ntest/calc.test.ts:7:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at node:internal/test_runner/test:1903:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 7,
+    expected: 6,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ntest/calc.test.ts:10:5
+✖ deep equal (1.501314ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   a: 2,
+  -   a: 1,
+      b: [
+        1,
+        2
+      ]
+    }
+  
+      at TestContext.<anonymous> (file:///repo/ntest/calc.test.ts:11:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at node:internal/test_runner/test:1903:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { a: 2, b: [ 1, 2 ] },
+    expected: { a: 1, b: [ 1, 2 ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at ntest/calc.test.ts:16:1
+✖ parse throws on empty input (0.163129ms)
+  Error: empty input
+      at parse (file:///repo/src/calc.ts:6:26)
+      at TestContext.<anonymous> (file:///repo/ntest/calc.test.ts:17:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Suite.postRun (node:internal/test_runner/test:1542:19)
+      at Suite.run (node:internal/test_runner/test:1921:10)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at ntest/other.test.ts:3:1
+✖ rejects (0.842871ms)
+  TypeError: bad type
+      at TestContext.<anonymous> (file:///repo/ntest/other.test.ts:4:24)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)

@@ -38,7 +38,7 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
    firstlight run lint typecheck test
    ```
 
-   It returns at the first failed or timed-out check, with the last 40 lines of that check's log, the status of every other check, and the next command. If every check passes, it prints one line and exits 0.
+   It returns at the first failed or timed-out check, with the last 40 lines of that check's log, the status of every other check, and the next command. When firstlight can read that tool's output, the check's [diagnostics](#diagnostics) come first and the log tail is 10 lines. If every check passes, it prints one line and exits 0.
 
 2. Fix the failure. Meanwhile, the other checks continue.
 
@@ -119,8 +119,9 @@ node src/cli.ts --help
 | `run` | A command string. firstlight runs it with `/bin/sh -c` in the repository root. stdout and stderr go to one log file. |
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
+| `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
 
-A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, and cycles before it starts anything.
+A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
 Without `firstlight.json`, each of the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` that exists becomes a check that runs `npm run <name>`, with no `after`.
 
@@ -139,7 +140,7 @@ firstlight --help
 
 - `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree is reused instead of run; see [Reused passes](#reused-passes). `--no-cache` runs every selected check.
 - `run --failed` runs only the checks that did not pass in the latest run; see [Running what failed](#running-what-failed).
-- `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the log path and the last 40 log lines. `--wait` blocks until every check is done.
+- `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the diagnostics, the log path, and the last 40 log lines (10 when there are diagnostics). `--wait` blocks until every check is done.
 - `follow` prints the status changes of the latest run as they happen; see [Following a run](#following-a-run).
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
 
@@ -180,9 +181,46 @@ run 01K...: 1 failed, 1 passed
 next: firstlight run
 ```
 
-A `running` line shows the time left that firstlight estimated when the check started, when there is one. A failed or timed-out check has the same log tail that `run` prints. A reused pass says `cached from run 01K...`, and a check whose supervisor died appears as `unknown` at the end. With `--json`, each change is one check object, in the same shape as `results --json`, and the last line is the summary object.
+A `running` line shows the time left that firstlight estimated when the check started, when there is one. A failed or timed-out check has the same [diagnostics](#diagnostics) and log tail that `run` prints. A reused pass says `cached from run 01K...`, and a check whose supervisor died appears as `unknown` at the end. With `--json`, each change is one check object, in the same shape as `results --json`, followed by the diagnostic lines of a failed check, and the last line is the summary object.
 
 Each line is written as it happens, with no buffering, so a tool that watches a command's output line by line, such as Claude Code's Monitor, sees each check finish. `follow` only reads the state; the supervisor stays the only writer of `events.jsonl`. With no run yet, it prints the error envelope with `"do":"firstlight run"`.
+
+## Diagnostics
+
+When a check fails or times out, firstlight reads its log with the check's parser, if it has one, and prints the problems the tool reported in one shape, before the log tail:
+
+```text
+typecheck failed (exit 2, 1.4s)
+  src/a.ts:1:14 TS2322 Type 'number' is not assignable to type 'string'.
+  src/a.ts:2:26 TS2304 Cannot find name 'missing'.
+  log: /.../typecheck.log
+    > app@1.0.0 typecheck
+    > tsc --noEmit
+    ...
+```
+
+Each line is `file:line:col rule message`. A part the tool does not report is left out. With diagnostics, the log tail is 10 lines instead of 40, because the diagnostics carry the substance. A check shows at most 20 diagnostics, then `(N more diagnostics in the log)`. Without a parser, or when the parser finds nothing, the output is the log tail as before.
+
+| Parser | Reads | `rule` |
+| --- | --- | --- |
+| `tsc` | `path(line,col): error TSxxxx: message`, and the `--pretty` form `path:line:col - error TSxxxx: message` | the `TSxxxx` code |
+| `vitest` | the default reporter: each `FAIL` block, its error, and the first stack frame inside the repository | the test's full name, `suite > test`; none for a file that failed to load |
+| `node-test` | `node --test` with the spec reporter (its `failing tests` section) or the TAP reporter; the first stack frame inside the repository | the test's full name, `suite > test` |
+| `archstrict` | the text of `archstrict check`: `[rule] path:line:col` and the evidence line | the rule id |
+
+The message is the first line of the error. A line that ends in `:` takes the next line too, so `Expected values to be strictly equal: 7 !== 6` stays whole. Paths inside the repository are relative to its root. Colors and CRLF line endings make no difference.
+
+A check's `parser` in `firstlight.json` chooses the parser. Without one, firstlight infers it from the `run` command when the command is one simple command: `tsc`, `vitest`, `node --test`, or `archstrict`, also through `npx`, `pnpm exec`, a `node_modules/.bin/` path, or a leading `NAME=value`. For `npm run <script>` and `npm test`, it reads the script's own command in `package.json`, one level deep. A command with `&&`, `||`, `;`, or a pipe gets no parser, because it can run more than one tool. firstlight decides the parser when the run starts, so `results` reads the log the same way later. A parser reads text, so a command that prints JSON, such as `archstrict check --json`, gives no diagnostics.
+
+In `--json`, the diagnostics follow their check's object, one line each:
+
+```json
+{"type":"check","name":"typecheck","status":"failed","exit_code":2,"elapsed_ms":1412,"log":"/.../typecheck.log","eta_ms":0,"overdue":false,"cached_from":null,"tail":["> app@1.0.0 typecheck","> tsc --noEmit","..."]}
+{"type":"diagnostic","check":"typecheck","file":"src/a.ts","line":1,"col":14,"rule":"TS2322","message":"Type 'number' is not assignable to type 'string'."}
+{"type":"diagnostic","check":"typecheck","file":"src/a.ts","line":2,"col":26,"rule":"TS2304","message":"Cannot find name 'missing'."}
+```
+
+`line`, `col`, and `rule` are `null` when the tool has none. When a check has more than 20 diagnostics, its object has `more_diagnostics`, the number left out.
 
 ## Reused passes
 
@@ -266,7 +304,7 @@ Each run has one detached supervisor process. It records the reused passes, star
 
 ## Non-goals for v0.1
 
-- No parsing of diagnostics. firstlight shows the log tail as it is.
+- Diagnostics come only from the four parsers above. Any other tool shows its log tail as it is.
 - No cache beyond reused passes. Earlier runs feed the time-left estimate and the passes a run reuses, and nothing else.
 - No daemon, no queue, and no watch mode.
 

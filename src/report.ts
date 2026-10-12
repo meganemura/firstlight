@@ -1,13 +1,35 @@
 // How a run looks to the agent that asked: short plain text by default, or
 // JSON Lines (one object per check, then one summary) with --json. It only
 // formats a RunSnapshot and its estimate; deciding exit codes and next
-// commands is the CLI's.
+// commands is the CLI's. A failed check's log is read through its parser,
+// when it has one, so its diagnostics come before the tail.
 
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
+import { formatDiagnostic, isParserName, parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
-import { logPaths, tailLines, type RunSnapshot } from "./store.ts";
+import { logPaths, readLogEnd, tailLines, type RunSnapshot } from "./store.ts";
 
 export const TAIL_LINES = 40;
+// With diagnostics, they carry the substance, and the tail only shows the
+// context the parser did not read, such as a summary.
+export const DIAGNOSTIC_TAIL_LINES = 10;
+export const DIAGNOSTIC_LIMIT = 20;
+
+interface LogReport {
+  diagnostics: Diagnostic[];
+  more: number;
+  tail: string[];
+}
+
+function logReport(snapshot: RunSnapshot, view: CheckView, file: string): LogReport {
+  const parser = snapshot.run.checks.find((check) => check.name === view.name)?.parser;
+  const all = isParserName(parser) ? parseDiagnostics(parser, readLogEnd(file), snapshot.run.root) : [];
+  return {
+    diagnostics: all.slice(0, DIAGNOSTIC_LIMIT),
+    more: Math.max(0, all.length - DIAGNOSTIC_LIMIT),
+    tail: tailLines(file, all.length > 0 ? DIAGNOSTIC_TAIL_LINES : TAIL_LINES),
+  };
+}
 
 export interface Summary {
   type: "summary";
@@ -45,6 +67,8 @@ export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEt
   return `${lines.join("\n")}\n`;
 }
 
+// One line for the check, then, for a failed check, one line per
+// diagnostic, without a trailing newline.
 export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
   const log = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
   const checkEta = etaOf(eta, view);
@@ -60,8 +84,22 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta): 
     cached_from: view.cached_from,
   };
   if (view.orphan) line.orphan = true;
-  if (showsLog(view)) line.tail = tailLines(log, TAIL_LINES);
-  return JSON.stringify(line);
+  if (!showsLog(view)) return JSON.stringify(line);
+  const report = logReport(snapshot, view, log);
+  if (report.more > 0) line.more_diagnostics = report.more;
+  line.tail = report.tail;
+  const diagnostics = report.diagnostics.map((diagnostic) =>
+    JSON.stringify({
+      type: "diagnostic",
+      check: view.name,
+      file: diagnostic.file,
+      line: diagnostic.line,
+      col: diagnostic.col,
+      rule: diagnostic.rule,
+      message: diagnostic.message,
+    }),
+  );
+  return [JSON.stringify(line), ...diagnostics].join("\n");
 }
 
 // `focus` puts one check first with its log, as `run` does for the check
@@ -106,8 +144,14 @@ export function changeText(snapshot: RunSnapshot, view: CheckView, eta: RunEta):
 
 function logBlock(snapshot: RunSnapshot, view: CheckView): string[] {
   const file = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
-  const tail = tailLines(file, TAIL_LINES);
-  return [`  log: ${file}`, ...(tail.length === 0 ? ["    (no output)"] : tail.map((line) => `    ${line}`))];
+  const report = logReport(snapshot, view, file);
+  const more = report.more === 0 ? [] : [`  (${report.more} more diagnostic${report.more === 1 ? "" : "s"} in the log)`];
+  return [
+    ...report.diagnostics.map((diagnostic) => `  ${formatDiagnostic(diagnostic)}`),
+    ...more,
+    `  log: ${file}`,
+    ...(report.tail.length === 0 ? ["    (no output)"] : report.tail.map((line) => `    ${line}`)),
+  ];
 }
 
 export function allPassedText(snapshot: RunSnapshot): string {

@@ -28,6 +28,7 @@ export default {
   classify: [
     { glob: "src/cache.ts", tags: ["layer:machine"] },
     { glob: "src/checks.ts", tags: ["layer:machine"] },
+    { glob: "src/diagnostics.ts", tags: ["layer:machine"] },
     { glob: "src/eta.ts", tags: ["layer:machine"] },
     { glob: "src/names.ts", tags: ["layer:machine"] },
     { glob: "src/config.ts", tags: ["layer:base"] },
@@ -48,6 +49,7 @@ export default {
     { name: "checks.ts", glob: "src/checks.ts", surface: "checks.ts" },
     { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
     { name: "config.ts", glob: "src/config.ts", surface: "config.ts" },
+    { name: "diagnostics.ts", glob: "src/diagnostics.ts", surface: "diagnostics.ts" },
     { name: "eta.ts", glob: "src/eta.ts", surface: "eta.ts" },
     { name: "names.ts", glob: "src/names.ts", surface: "names.ts" },
     { name: "errors.ts", glob: "src/errors.ts", surface: "errors.ts" },
@@ -66,6 +68,7 @@ export default {
     "checks.ts",
     "cli.ts",
     "config.ts",
+    "diagnostics.ts",
     "errors.ts",
     "eta.ts",
     "names.ts",
@@ -83,7 +86,7 @@ export default {
         sequence: { "": ["machine", "base", "run", "entry"] },
         direction: "downward-only",
         because:
-          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, cache.ts the pure cache keys and reuse lookup, and names.ts the pure glob and log-file naming; config, errors, processes, store, and tree do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
+          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, cache.ts the pure cache keys and reuse lookup, diagnostics.ts the pure log parsers and parser inference, and names.ts the pure glob and log-file naming; config, errors, processes, store, and tree do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
       },
     ],
   },

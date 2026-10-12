@@ -322,6 +322,29 @@ export function tailLines(file: string, count: number): string[] {
   }
 }
 
+// Enough for any log a parser reads in practice. A longer log keeps its
+// end, where test runners print their failures.
+const PARSE_BYTES = 8 * 1024 * 1024;
+
+export function readLogEnd(file: string): string {
+  let fd: number;
+  try {
+    fd = openSync(file, "r");
+  } catch (err) {
+    if (isEnoent(err)) return "";
+    throw err;
+  }
+  try {
+    const size = statSync(file).size;
+    const length = Math.min(size, PARSE_BYTES);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    return buffer.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function newRunId(now = Date.now()): string {
   let time = now;
   let timeChars = "";
@@ -354,7 +377,8 @@ function isRunRecord(value: unknown): value is RunRecord {
       typeof check.name === "string" &&
       typeof check.run === "string" &&
       Array.isArray(check.after) &&
-      typeof check.timeoutSec === "number",
+      typeof check.timeoutSec === "number" &&
+      (check.parser === undefined || check.parser === null || typeof check.parser === "string"),
   );
 }
 

@@ -1,0 +1,23 @@
+
+> arch@1.0.0 archstrict
+> archstrict check
+
+[public-surface-bypass] /repo/src/b/index.ts:1:24
+  '../a/internal.ts' resolved to a file inside module 'a' other than its index.ts, index.tsx, index.mts, index.cts
+  because: a module's public surface is its only public surface; everything else is private
+  config: /repo/archstrict.config.ts:29:5 declaredModules[0] (governs)
+  do: import from a/index.ts, a/index.tsx, a/index.mts, a/index.cts instead, or add the needed export there
+[uncovered-module] /repo/src/extra.ts:1:1
+  '/repo/src/extra.ts' is in scope but matches no declared module
+  because: a file matching no declared module is unchecked, not passing
+  config: /repo/archstrict.config.ts:27:20 declaredModules (governs)
+  do: add { name: "extra.ts", glob: "src/extra.ts", surface: "extra.ts" } to declaredModules in archstrict.config.ts, or add "src/extra.ts" to exclude if it is not module content; then run archstrict init
+modules: 3
+modules without a public surface: 1
+edges: 1
+not covered by any declared module: 1
+unresolved specifiers: 0
+unsupported syntax: 0
+type leaks: 0
+todo: 0
+do: add each uncovered-module file to declaredModules or exclude in archstrict.config.ts, then run archstrict check

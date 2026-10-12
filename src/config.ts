@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { CheckSpec, ReportedStatus } from "./checks.ts";
+import { inferParser, PARSER_CHOICES } from "./diagnostics.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { expandPattern, isPattern, shellQuote } from "./names.ts";
 
@@ -20,7 +21,7 @@ export const FALLBACK_SCRIPTS = ["lint", "typecheck", "test", "archstrict"] as c
 // argument of `firstlight run` that names it cannot also read as a shell
 // command or a script glob.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const CHECK_KEYS = new Set(["run", "after", "timeoutSec"]);
+const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser"]);
 
 export interface Config {
   source: "firstlight.json" | "package.json";
@@ -71,7 +72,7 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
   if (!isRecord(value)) throw invalid(file, `check "${name}" must be an object`);
   for (const key of Object.keys(value)) {
     if (!CHECK_KEYS.has(key)) {
-      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are run, after, timeoutSec`);
+      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are run, after, timeoutSec, parser`);
     }
   }
   if (typeof value.run !== "string" || value.run.trim().length === 0) {
@@ -91,7 +92,11 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
     }
     timeoutSec = value.timeoutSec;
   }
-  return { name, run: value.run, after, timeoutSec };
+  if (value.parser === undefined) return { name, run: value.run, after, timeoutSec };
+  if (typeof value.parser !== "string" || !PARSER_CHOICES.includes(value.parser)) {
+    throw invalid(file, `check "${name}" has "parser" ${JSON.stringify(value.parser)}; allowed values are ${PARSER_CHOICES.join(", ")}`);
+  }
+  return { name, run: value.run, after, timeoutSec, parser: value.parser };
 }
 
 function validateGraph(checks: CheckSpec[], file: string): void {
@@ -283,8 +288,31 @@ export function commandCheck(command: string): CheckSpec {
   return { name: command, run: command, after: [], timeoutSec: DEFAULT_TIMEOUT_SEC };
 }
 
+// The parser each check's log is read with, decided once when the run
+// starts so `results` and `follow` read the log the same way later. A
+// "parser" in firstlight.json wins, and "none" turns inference off.
+export function withParsers(root: string, checks: readonly CheckSpec[]): CheckSpec[] {
+  let scripts: Record<string, string> | null | undefined;
+  const scriptOf = (name: string): string | null => {
+    if (scripts === undefined) scripts = readScriptCommands(path.join(root, "package.json"));
+    return scripts?.[name] ?? null;
+  };
+  return checks.map((check) => {
+    if (check.parser === "none") return { ...check, parser: null };
+    // A check `run --failed` carries over from the previous run keeps the
+    // parser that run decided, null included.
+    if (check.parser !== undefined) return check;
+    return { ...check, parser: inferParser(check.run, scriptOf) };
+  });
+}
+
 // Script names in package.json order, or null when there is no package.json.
 function readScripts(file: string): string[] | null {
+  const scripts = readScriptCommands(file);
+  return scripts === null ? null : Object.keys(scripts);
+}
+
+function readScriptCommands(file: string): Record<string, string> | null {
   const text = readOptional(file);
   if (text === null) return null;
   let raw: unknown;
@@ -294,7 +322,11 @@ function readScripts(file: string): string[] | null {
     throw new AgentError(`${file} is not valid JSON (${messageOf(err)})`, `fix ${file}, then rerun the command`);
   }
   const scripts = isRecord(raw) && isRecord(raw.scripts) ? raw.scripts : {};
-  return Object.keys(scripts).filter((name) => typeof scripts[name] === "string");
+  const commands: Record<string, string> = {};
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command === "string") commands[name] = command;
+  }
+  return commands;
 }
 
 function invalid(file: string, reason: string): AgentError {

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { cacheKeys } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
-import { configuredChecks, loadConfig, resolveRun, selectFailed } from "./config.ts";
+import { configuredChecks, loadConfig, resolveRun, selectFailed, withParsers } from "./config.ts";
 import { AgentError, exitWithEnvelope } from "./errors.ts";
 import { estimate, type RunEta } from "./eta.ts";
 import { shellQuote } from "./names.ts";
@@ -76,10 +76,20 @@ run 01K..., 10.4s originally)". Environment variables and files outside
 the repository are not part of that comparison; --no-cache runs every
 check anyway. Only a pass is reused, and only in a git repository.
 
+A failed or timed-out check whose log a parser reads prints its
+diagnostics, at most 20, as "file:line:col rule message" lines before a
+10-line log tail, in run, results, and follow; --json prints them as
+{"type":"diagnostic",...} lines after the check. The parsers are tsc,
+vitest, node-test (node --test), and archstrict. Each check's parser comes from its "parser" in firstlight.json,
+or from its command: tsc, vitest, node --test, archstrict, or "npm run
+<script>" (and "npm test") whose script runs one of them. "parser":
+"none" turns this off for one check.
+
 Checks come from firstlight.json at the repository root; "run" is any
 shell command:
   {"checks": {"build": {"run": "make build"},
-              "test": {"run": "bundle exec rspec", "after": ["build"], "timeoutSec": 600}}}
+              "test": {"run": "bundle exec rspec", "after": ["build"], "timeoutSec": 600},
+              "types": {"run": "make types", "parser": "tsc"}}}
 To run checks in order, give a check "after" in firstlight.json. Without
 firstlight.json, "firstlight run" runs the package.json scripts lint,
 typecheck, test, and archstrict.
@@ -209,6 +219,7 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
         : resolveRun(ctx.state.root, names, commands);
     if (previous !== null) await stopRun(ctx.state, previous);
   }
+  checks = withParsers(ctx.state.root, checks);
 
   // After the stop, so a check of the previous run that was still writing
   // into the tree has finished before the tree is hashed. Keys are recorded

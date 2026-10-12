@@ -51,6 +51,9 @@ export interface CheckSpec {
   run: string;
   after: string[];
   timeoutSec: number;
+  // The diagnostics parser for its log. Absent in firstlight.json means
+  // infer it; `run` records the outcome, a parser name or null, in run.json.
+  parser?: string | null;
 }
 
 export interface CheckEvent {
