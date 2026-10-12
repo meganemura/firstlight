@@ -1,0 +1,80 @@
+import type { Config } from "./archstrict.types.js";
+
+// Public surface: other modules may import a directory module only through
+// its own surface file (named by `surface` below), or through the files its own
+// package.json exports map names. An import that reaches any other file in
+// the directory is a violation. A directory module with no such file is
+// entirely private. A module whose glob names one file is that file, so its
+// entry names the file itself as its surface.
+export default {
+  schemaVersion: 1,
+  surface: ["index.ts", "index.tsx", "index.mts", "index.cts"],
+  // Kept out of analysis entirely:
+  // - archstrict's own two files, which are never module content;
+  // - hidden directories at any depth (.git, tool state), which tsc's own
+  //   default include also skips;
+  // - common noise directories that init found on disk (test, tmp).
+  //   Remove one of these entries if that directory holds module content.
+  exclude: [
+    "archstrict.config.ts",
+    "archstrict.types.ts",
+    ".*/**",
+    "**/.*/**",
+    "test/**",
+    "tmp/**",
+  ],
+  // The layers, bottom to top. A file may import its own layer or a lower
+  // one, never a higher one.
+  classify: [
+    { glob: "src/checks.ts", tags: ["layer:machine"] },
+    { glob: "src/config.ts", tags: ["layer:base"] },
+    { glob: "src/errors.ts", tags: ["layer:base"] },
+    { glob: "src/processes.ts", tags: ["layer:base"] },
+    { glob: "src/store.ts", tags: ["layer:base"] },
+    { glob: "src/report.ts", tags: ["layer:run"] },
+    { glob: "src/supervisor.ts", tags: ["layer:run"] },
+    { glob: "src/cli.ts", tags: ["layer:entry"] },
+  ],
+  // One module per source file, so every import between two files of src/
+  // is checked. After an edit, run archstrict init to regenerate
+  // archstrict.types.ts.
+  declaredModules: [
+    // Each directory and TypeScript source file directly in src/.
+    { name: "checks.ts", glob: "src/checks.ts", surface: "checks.ts" },
+    { name: "cli.ts", glob: "src/cli.ts", surface: "cli.ts" },
+    { name: "config.ts", glob: "src/config.ts", surface: "config.ts" },
+    { name: "errors.ts", glob: "src/errors.ts", surface: "errors.ts" },
+    { name: "processes.ts", glob: "src/processes.ts", surface: "processes.ts" },
+    { name: "report.ts", glob: "src/report.ts", surface: "report.ts" },
+    { name: "store.ts", glob: "src/store.ts", surface: "store.ts" },
+    { name: "supervisor.ts", glob: "src/supervisor.ts", surface: "supervisor.ts" },
+    // Each other top-level directory that holds TypeScript source, and each top-level TypeScript source file.
+    { name: "vitest.config.ts", glob: "vitest.config.ts", surface: "vitest.config.ts" },
+  ],
+  // No frozen debt. A later violation in any of these fails check rather
+  // than landing in the todo file.
+  strict: [
+    "checks.ts",
+    "cli.ts",
+    "config.ts",
+    "errors.ts",
+    "processes.ts",
+    "report.ts",
+    "store.ts",
+    "supervisor.ts",
+    "vitest.config.ts",
+  ],
+  edges: {
+    order: [
+      {
+        tagNamespace: "layer",
+        sequence: { "": ["machine", "base", "run", "entry"] },
+        direction: "downward-only",
+        because:
+          "checks.ts is the pure state machine everything else folds through; config, errors, processes, and store do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
+      },
+    ],
+  },
+  because:
+    "src/ is a handful of files, so each file is its own module and every import between two of them is checked. The layer order keeps the state machine free of I/O and keeps the CLI entry on top.",
+} satisfies Config;
