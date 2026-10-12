@@ -10,6 +10,7 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { compareFailures, isFailure, isUnproven, type Outcome } from "./baseline.ts";
 import { cacheKeys } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
 import { configuredChecks, loadConfig, resolveRun, selectFailed, withParsers } from "./config.ts";
@@ -17,7 +18,19 @@ import { AgentError, exitWithEnvelope } from "./errors.ts";
 import { estimate, type RunEta } from "./eta.ts";
 import { shellQuote } from "./names.ts";
 import { signalGroup, signalPid, sleep } from "./processes.ts";
-import { allPassedText, changeText, checkJson, jsonLines, summarize, summaryText, text } from "./report.ts";
+import {
+  allPassedText,
+  changeText,
+  checkDiagnostics,
+  checkJson,
+  jsonLines,
+  newJsonLines,
+  newText,
+  summarize,
+  summaryText,
+  text,
+  type Comparison,
+} from "./report.ts";
 import { eventsPath, readEvents, RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
 import { supervise, SUPERVISE_COMMAND } from "./supervisor.ts";
 import { treeKey } from "./tree.ts";
@@ -30,7 +43,7 @@ const HELP = `firstlight: run lint, typecheck, and tests in parallel; return at 
 Usage:
   firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
   firstlight run --failed [--no-cache] [--cwd DIR] [--json]
-  firstlight results [--wait] [--cwd DIR] [--json]
+  firstlight results [--wait] [--new] [--cwd DIR] [--json]
   firstlight follow [--cwd DIR] [--json]
   firstlight stop [--cwd DIR] [--json]
   firstlight --help
@@ -48,6 +61,14 @@ run      Stop the previous run if it is still going, start the checks in
          brings its "after" checks); a check removed from firstlight.json
          since is left out.
 results  Report the latest run. --wait blocks until every check is done.
+         --new reports only the failures that were not there before: each
+         check is compared with the newest earlier kept run in which the
+         same check (same name, same command) passed, failed, or timed
+         out. A diagnostic is new when that run has none with the same
+         file, rule, and message (line and column do not count); a failure
+         without diagnostics is new when that run passed. Passes and known
+         failures become counts. Exit 1 only for a new failure, or for a
+         check that is still running, cancelled, or unknown.
 follow   Print one line for each status change of the latest run, from its
          first one, as it happens, then the summary of results --wait, and
          exit as results --wait would. Each line is flushed on its own, so
@@ -96,7 +117,8 @@ typecheck, test, and archstrict.
 
 Exit codes:
   0  every check passed (run), or no check failed or was cancelled
-     (results, follow), or stop finished
+     (results, follow), or no failure is new and every check finished
+     (results --new), or stop finished
   1  a check failed, timed out, was skipped, was cancelled, or its
      result is unknown; or firstlight itself failed, with {"error","do"}
      on stderr
@@ -132,6 +154,7 @@ async function main(argv: string[]): Promise<number> {
         json: { type: "boolean", default: false },
         wait: { type: "boolean", default: false },
         failed: { type: "boolean", default: false },
+        new: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -165,6 +188,9 @@ async function main(argv: string[]): Promise<number> {
   if (values.wait && command !== "results") {
     throw new AgentError("--wait belongs to results", "run `firstlight results --wait`");
   }
+  if (values.new && command !== "results") {
+    throw new AgentError("--new belongs to results", "run `firstlight results --new`");
+  }
   if (values["no-cache"] && command !== "run") {
     throw new AgentError("--no-cache belongs to run", "run `firstlight run --no-cache`");
   }
@@ -188,7 +214,7 @@ async function main(argv: string[]): Promise<number> {
     case "run":
       return runCommand(ctx, values.failed ? "failed" : { names, commands }, !values["no-cache"]);
     case "results":
-      return resultsCommand(ctx, values.wait);
+      return resultsCommand(ctx, values.wait, values.new);
     case "follow":
       return followCommand(ctx);
     default:
@@ -293,7 +319,7 @@ function failedChecks(ctx: Context, previous: string, configured: CheckSpec[]): 
   throw new AgentError(`run ${previous} has no check that did not pass`, cmd(ctx, "run"));
 }
 
-async function resultsCommand(ctx: Context, wait: boolean): Promise<number> {
+async function resultsCommand(ctx: Context, wait: boolean, onlyNew: boolean): Promise<number> {
   const id = ctx.state.currentId();
   if (id === null) {
     throw new AgentError(`no run yet for ${ctx.state.root}`, cmd(ctx, "run"));
@@ -304,9 +330,38 @@ async function resultsCommand(ctx: Context, wait: boolean): Promise<number> {
     snapshot = ctx.state.snapshot(id);
   }
   const eta = etaOf(snapshot, ctx.state.typicalDurations(snapshot.run));
+  if (onlyNew) {
+    const comparison = compare(ctx, snapshot);
+    const failing = [...comparison.checks.values()].some((check) => check.isNew);
+    const running = snapshot.checks.some((view) => bucketOf(view.status) === "running");
+    const unproven = snapshot.checks.some((view) => isUnproven(view.status));
+    const next = running ? cmd(ctx, "results --new --wait") : failing || unproven ? cmd(ctx, "run") : null;
+    out(ctx.json ? newJsonLines(snapshot, comparison, next, eta) : newText(snapshot, comparison, next, eta));
+    return failing || unproven ? 1 : 0;
+  }
   const next = nextFor(ctx, snapshot);
   out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
   return resultsCode(snapshot);
+}
+
+// Reads the logs of the latest run and of each check's baseline; the
+// comparison itself is pure.
+function compare(ctx: Context, snapshot: RunSnapshot): Comparison {
+  const baselines = ctx.state.baselines(snapshot.run);
+  const earlier = new Map<string, Outcome>();
+  for (const [name, baseline] of baselines) {
+    const failed = isFailure(baseline.status);
+    const dir = ctx.state.runDir(baseline.run);
+    earlier.set(name, { failed, diagnostics: failed ? checkDiagnostics(baseline.record, dir, name) : [] });
+  }
+  const latest = snapshot.checks.map((view) => {
+    const failed = isFailure(view.status);
+    return { name: view.name, failed, diagnostics: failed ? checkDiagnostics(snapshot.run, snapshot.dir, view.name) : [] };
+  });
+  return {
+    baselines: new Map([...baselines].map(([name, baseline]) => [name, baseline.run])),
+    checks: new Map(compareFailures(latest, earlier).map((check) => [check.name, check])),
+  };
 }
 
 // A cancelled check proved nothing, so it does not count as a pass.

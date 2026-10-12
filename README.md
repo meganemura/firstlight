@@ -132,7 +132,7 @@ The repository root is `git rev-parse --show-toplevel` from the current director
 ```text
 firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
 firstlight run --failed [--no-cache] [--cwd DIR] [--json]
-firstlight results [--wait] [--cwd DIR] [--json]
+firstlight results [--wait] [--new] [--cwd DIR] [--json]
 firstlight follow [--cwd DIR] [--json]
 firstlight stop [--cwd DIR] [--json]
 firstlight --help
@@ -140,7 +140,7 @@ firstlight --help
 
 - `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree is reused instead of run; see [Reused passes](#reused-passes). `--no-cache` runs every selected check.
 - `run --failed` runs only the checks that did not pass in the latest run; see [Running what failed](#running-what-failed).
-- `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the diagnostics, the log path, and the last 40 log lines (10 when there are diagnostics). `--wait` blocks until every check is done.
+- `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the diagnostics, the log path, and the last 40 log lines (10 when there are diagnostics). `--wait` blocks until every check is done. `--new` reports only the failures the previous run did not have; see [Only new failures](#only-new-failures).
 - `follow` prints the status changes of the latest run as they happen; see [Following a run](#following-a-run).
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
 
@@ -184,6 +184,41 @@ next: firstlight run
 A `running` line shows the time left that firstlight estimated when the check started, when there is one. A failed or timed-out check has the same [diagnostics](#diagnostics) and log tail that `run` prints. A reused pass says `cached from run 01K...`, and a check whose supervisor died appears as `unknown` at the end. With `--json`, each change is one check object, in the same shape as `results --json`, followed by the diagnostic lines of a failed check, and the last line is the summary object.
 
 Each line is written as it happens, with no buffering, so a tool that watches a command's output line by line, such as Claude Code's Monitor, sees each check finish. `follow` only reads the state; the supervisor stays the only writer of `events.jsonl`. With no run yet, it prints the error envelope with `"do":"firstlight run"`.
+
+## Only new failures
+
+`firstlight results --new` reports only the failures that were not there before, so a project that already has failures can still gate a change on not adding one:
+
+```text
+typecheck failed (exit 2, 1.4s)
+  src/a.ts:4:26 TS2304 Cannot find name 'missing'.
+  (1 diagnostic already in run 01K...)
+  log: /.../typecheck.log
+    ...
+not new: 1 failure already in the previous run, 2 passed
+run 01K...: 1 new failure
+next: firstlight run
+```
+
+The previous run is chosen per check: it is the newest kept run before the latest one in which a check with the same name and the same `run` command `passed`, `failed`, or `timed_out`. A run in which that check was `cancelled`, `skipped`, or never finished is passed over, because it proved nothing either way. This is per check, not one run for all, because `run --failed` and `run <name>` leave runs that hold only some of the checks.
+
+A failure is new when:
+
+- for a check with [diagnostics](#diagnostics): no diagnostic of the same check in the previous run has the same file, rule, and message. The line and column do not count, so code that only moved is not new. The cost is that a second copy of a known error, in the same file with the same rule and message, is not new either.
+- for a failed or timed-out check without diagnostics: the check did not fail or time out in the previous run.
+- for a check with no previous run at all: always. The output says so in one line: `no earlier run to compare with, so every failure counts as new`, or `no earlier result for lint, so its failures count as new` when only some checks have none.
+
+The output lists each check with a new failure, with only its new diagnostics, and each check that proved nothing yet (`pending`, `running`, `cancelled`, or `unknown`). Passed checks, skipped checks, and failures that were already there are counts on the `not new:` line. A skipped check is judged through the `after` check whose failure skipped it.
+
+`--new` works with `--wait`, and the gate use waits for every check: `firstlight results --new --wait`. It exits 1 when there is a new failure, or when a check is still `pending` or `running`, was `cancelled`, or is `unknown`, because those checks prove nothing. Otherwise it exits 0, also when the run has failures that were already there.
+
+With `--json`, every check object of `results --json` comes, with two more fields: `new` (`true` when the check has a new failure) and `baseline` (the id of the run it was compared with, or `null`). A failed check also has `old_diagnostics`, the number of its diagnostics that were already there. Only the new diagnostics follow a check, and `more_diagnostics` counts the new ones past 20. The summary has four more fields: `new` (the checks with a new failure), `new_failures` and `old_failures` (counts, where a failure is one diagnostic, or one failed check without diagnostics), and `no_baseline` (the checks with no previous run).
+
+```json
+{"type":"check","name":"typecheck","status":"failed","exit_code":2,"elapsed_ms":1412,"log":"/.../typecheck.log","eta_ms":0,"overdue":false,"cached_from":null,"new":true,"baseline":"01K...","old_diagnostics":1,"tail":["..."]}
+{"type":"diagnostic","check":"typecheck","file":"src/a.ts","line":4,"col":26,"rule":"TS2304","message":"Cannot find name 'missing'."}
+{"type":"summary","run":"01K...","failed":["typecheck"],"running":[],"passed":[],"cancelled":[],"next":"firstlight run","eta_ms":0,"new":["typecheck"],"new_failures":1,"old_failures":1,"no_baseline":[]}
+```
 
 ## Diagnostics
 
@@ -272,6 +307,7 @@ The default output is short plain text with no colors. `--json` prints JSON Line
 | --- | --- | --- |
 | `run` | every check passed | any check did not pass |
 | `results`, `follow` | no check is `failed`, `timed_out`, `skipped`, `cancelled`, or `unknown` | at least one is |
+| `results --new` | no failure is new, and no check is `pending`, `running`, `cancelled`, or `unknown` | a failure is new, or a check proved nothing yet |
 | `stop` | the run stopped, or nothing was running | firstlight itself failed |
 
 When firstlight itself fails (bad config, unknown command, no run yet), it exits 1 and prints one JSON object on stderr:
@@ -305,7 +341,7 @@ Each run has one detached supervisor process. It records the reused passes, star
 ## Non-goals for v0.1
 
 - Diagnostics come only from the four parsers above. Any other tool shows its log tail as it is.
-- No cache beyond reused passes. Earlier runs feed the time-left estimate and the passes a run reuses, and nothing else.
+- No cache beyond reused passes. Earlier runs feed the time-left estimate, the passes a run reuses, and the comparison of `results --new`, and nothing else.
 - No daemon, no queue, and no watch mode.
 
 ## Development

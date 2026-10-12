@@ -1,8 +1,9 @@
 // The on-disk state of runs under XDG_STATE_HOME, never inside the checked
 // repository: repository identity, run ids, run.json, events.jsonl, the
 // `current` pointer, check logs, and pruning, and the earlier runs read back
-// for the time-left estimate and for reused passes. The CLI writes run.json
-// and `current`; only the supervisor appends to events.jsonl.
+// for the time-left estimate, for reused passes, and for the baselines of
+// `results --new`. The CLI writes run.json and `current`; only the
+// supervisor appends to events.jsonl.
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -33,6 +34,7 @@ import {
   type RunEventLine,
   type RunOutcome,
 } from "./checks.ts";
+import { findBaselines, type Baseline } from "./baseline.ts";
 import { findReuse, type Reuse } from "./cache.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { typicalDurations, type PastRun } from "./eta.ts";
@@ -202,6 +204,18 @@ export class RepoState {
       .filter((files) => files.record.id < run.id)
       .map((files) => ({ checks: files.record.checks, states: files.states }));
     return typicalDurations(run.checks, past);
+  }
+
+  // The run each check of `run` is compared with, keyed by check name, with
+  // that run's record, whose parser and log the comparison reads.
+  baselines(run: RunRecord): Map<string, Baseline & { record: RunRecord }> {
+    const past = this.pastRuns().filter((files) => files.record.id < run.id);
+    const records = new Map(past.map((files) => [files.record.id, files.record]));
+    const found = findBaselines(
+      run.checks,
+      past.map((files) => ({ id: files.record.id, checks: files.record.checks, states: files.states })),
+    );
+    return new Map([...found].map(([name, baseline]) => [name, { ...baseline, record: records.get(baseline.run)! }]));
   }
 
   // Called before the new run exists, so every kept run is earlier.

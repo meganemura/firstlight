@@ -2,12 +2,14 @@
 // JSON Lines (one object per check, then one summary) with --json. It only
 // formats a RunSnapshot and its estimate; deciding exit codes and next
 // commands is the CLI's. A failed check's log is read through its parser,
-// when it has one, so its diagnostics come before the tail.
+// when it has one, so its diagnostics come before the tail. `results --new`
+// gets its own text and JSON here too, from a comparison the CLI made.
 
+import { countFailures, isUnproven, type CheckComparison } from "./baseline.ts";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { formatDiagnostic, isParserName, parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
-import { logPaths, readLogEnd, tailLines, type RunSnapshot } from "./store.ts";
+import { logPaths, readLogEnd, tailLines, type RunRecord, type RunSnapshot } from "./store.ts";
 
 export const TAIL_LINES = 40;
 // With diagnostics, they carry the substance, and the tail only shows the
@@ -21,14 +23,40 @@ interface LogReport {
   tail: string[];
 }
 
-function logReport(snapshot: RunSnapshot, view: CheckView, file: string): LogReport {
-  const parser = snapshot.run.checks.find((check) => check.name === view.name)?.parser;
-  const all = isParserName(parser) ? parseDiagnostics(parser, readLogEnd(file), snapshot.run.root) : [];
+// Every diagnostic in the log of one check of a run, through the parser
+// that run recorded for it.
+export function checkDiagnostics(run: RunRecord, dir: string, name: string): Diagnostic[] {
+  const parser = run.checks.find((check) => check.name === name)?.parser;
+  if (!isParserName(parser)) return [];
+  return parseDiagnostics(parser, readLogEnd(logPaths(dir, run.checks).get(name)!), run.root);
+}
+
+// `shown` narrows the diagnostics printed, as `results --new` does; the
+// tail stays short whenever the log has any.
+function logReport(snapshot: RunSnapshot, view: CheckView, file: string, shown?: readonly Diagnostic[]): LogReport {
+  const all = checkDiagnostics(snapshot.run, snapshot.dir, view.name);
+  const printed = shown ?? all;
   return {
-    diagnostics: all.slice(0, DIAGNOSTIC_LIMIT),
-    more: Math.max(0, all.length - DIAGNOSTIC_LIMIT),
+    diagnostics: printed.slice(0, DIAGNOSTIC_LIMIT),
+    more: Math.max(0, printed.length - DIAGNOSTIC_LIMIT),
     tail: tailLines(file, all.length > 0 ? DIAGNOSTIC_TAIL_LINES : TAIL_LINES),
   };
+}
+
+// What `results --new` compared: the baseline run of each check that has
+// one, and one entry per failed check of the run.
+export interface Comparison {
+  baselines: ReadonlyMap<string, string>;
+  checks: ReadonlyMap<string, CheckComparison>;
+}
+
+interface Compared {
+  baseline: string | null;
+  comparison: CheckComparison | undefined;
+}
+
+function comparedOf(comparison: Comparison, view: CheckView): Compared {
+  return { baseline: comparison.baselines.get(view.name) ?? null, comparison: comparison.checks.get(view.name) };
 }
 
 export interface Summary {
@@ -68,8 +96,10 @@ export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEt
 }
 
 // One line for the check, then, for a failed check, one line per
-// diagnostic, without a trailing newline.
-export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
+// diagnostic, without a trailing newline. With `compared`, the check line
+// gains `new` and `baseline` (and `old_diagnostics` when it failed), and
+// only the new diagnostics follow it.
+export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, compared?: Compared): string {
   const log = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
   const checkEta = etaOf(eta, view);
   const line: Record<string, unknown> = {
@@ -84,8 +114,13 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta): 
     cached_from: view.cached_from,
   };
   if (view.orphan) line.orphan = true;
+  if (compared !== undefined) {
+    line.new = compared.comparison?.isNew ?? false;
+    line.baseline = compared.baseline;
+  }
   if (!showsLog(view)) return JSON.stringify(line);
-  const report = logReport(snapshot, view, log);
+  if (compared !== undefined) line.old_diagnostics = compared.comparison?.oldDiagnostics ?? 0;
+  const report = logReport(snapshot, view, log, compared?.comparison?.newDiagnostics);
   if (report.more > 0) line.more_diagnostics = report.more;
   line.tail = report.tail;
   const diagnostics = report.diagnostics.map((diagnostic) =>
@@ -142,16 +177,93 @@ export function changeText(snapshot: RunSnapshot, view: CheckView, eta: RunEta):
   return `${out.join("\n")}\n`;
 }
 
-function logBlock(snapshot: RunSnapshot, view: CheckView): string[] {
+function logBlock(snapshot: RunSnapshot, view: CheckView, compared?: Compared): string[] {
   const file = logPaths(snapshot.dir, snapshot.run.checks).get(view.name)!;
-  const report = logReport(snapshot, view, file);
-  const more = report.more === 0 ? [] : [`  (${report.more} more diagnostic${report.more === 1 ? "" : "s"} in the log)`];
+  const report = logReport(snapshot, view, file, compared?.comparison?.newDiagnostics);
+  const more = report.more === 0 ? [] : [`  (${report.more} more ${plural(report.more, "diagnostic")} in the log)`];
+  const old = compared?.comparison?.oldDiagnostics ?? 0;
+  const known = old === 0 ? [] : [`  (${old} ${plural(old, "diagnostic")} already in run ${compared!.baseline})`];
   return [
     ...report.diagnostics.map((diagnostic) => `  ${formatDiagnostic(diagnostic)}`),
     ...more,
+    ...known,
     `  log: ${file}`,
     ...(report.tail.length === 0 ? ["    (no output)"] : report.tail.map((line) => `    ${line}`)),
   ];
+}
+
+export interface NewSummary extends Summary {
+  new: string[];
+  new_failures: number;
+  old_failures: number;
+  no_baseline: string[];
+}
+
+export function summarizeNew(snapshot: RunSnapshot, comparison: Comparison, next: string | null, eta: RunEta): NewSummary {
+  const counts = countFailures([...comparison.checks.values()]);
+  return {
+    ...summarize(snapshot, next, eta),
+    new: [...comparison.checks.values()].filter((check) => check.isNew).map((check) => check.name),
+    new_failures: counts.new,
+    old_failures: counts.old,
+    no_baseline: snapshot.checks.filter((view) => !comparison.baselines.has(view.name)).map((view) => view.name),
+  };
+}
+
+// Every check, as `results --json` prints it with the fields of `compared`,
+// then only the new diagnostics, then the summary.
+export function newJsonLines(snapshot: RunSnapshot, comparison: Comparison, next: string | null, eta: RunEta): string {
+  const lines = snapshot.checks.map((view) => checkJson(snapshot, view, eta, comparedOf(comparison, view)));
+  lines.push(JSON.stringify(summarizeNew(snapshot, comparison, next, eta)));
+  return `${lines.join("\n")}\n`;
+}
+
+// Only the checks with a new failure, with their new diagnostics, and the
+// checks that proved nothing yet; passes and known failures are counts.
+export function newText(snapshot: RunSnapshot, comparison: Comparison, next: string | null, eta: RunEta): string {
+  const out: string[] = [];
+  for (const view of snapshot.checks) {
+    const compared = comparedOf(comparison, view);
+    if (compared.comparison?.isNew === true) {
+      out.push(statusLine(snapshot, view, eta), ...logBlock(snapshot, view, compared));
+    } else if (isUnproven(view.status)) {
+      out.push(statusLine(snapshot, view, eta));
+    }
+  }
+  const summary = summarizeNew(snapshot, comparison, next, eta);
+  if (comparison.baselines.size === 0) {
+    out.push("no earlier run to compare with, so every failure counts as new");
+  } else {
+    const missing = [...comparison.checks.keys()].filter((name) => !comparison.baselines.has(name));
+    if (missing.length > 0) {
+      out.push(`no earlier result for ${missing.join(", ")}, so ${missing.length === 1 ? "its" : "their"} failures count as new`);
+    }
+  }
+  const skipped = snapshot.checks.filter((view) => view.status === "skipped").length;
+  const notNew = [
+    summary.old_failures > 0 ? `${summary.old_failures} ${plural(summary.old_failures, "failure")} already in the previous run` : "",
+    summary.passed.length > 0 ? `${summary.passed.length} passed` : "",
+    skipped > 0 ? `${skipped} skipped` : "",
+  ].filter((part) => part !== "");
+  if (notNew.length > 0) out.push(`not new: ${notNew.join(", ")}`);
+  const fresh = summary.new_failures === 0 ? "no new failures" : `${summary.new_failures} new ${plural(summary.new_failures, "failure")}`;
+  const unproven = [
+    ["running", summary.running.length],
+    ["cancelled", summary.cancelled.length],
+    ["unknown", snapshot.checks.filter((view) => view.status === "unknown").length],
+  ]
+    .filter(([, count]) => count !== 0)
+    .map(([kind, count]) => `${count} ${kind}`);
+  out.push(`run ${snapshot.run.id}: ${[fresh, ...unproven].join(", ")}`);
+  if (next !== null) {
+    const waiting = !snapshot.checks.every(isSettled) && eta.eta_ms !== null;
+    out.push(waiting ? `next: ${next} (about ${formatSeconds(eta.eta_ms!)} left)` : `next: ${next}`);
+  }
+  return `${out.join("\n")}\n`;
+}
+
+function plural(count: number, word: string): string {
+  return count === 1 ? word : `${word}s`;
 }
 
 export function allPassedText(snapshot: RunSnapshot): string {
