@@ -104,7 +104,9 @@ diagnostics, at most 20, as "file:line:col rule message" lines before a
 vitest, node-test (node --test), and archstrict. Each check's parser comes from its "parser" in firstlight.json,
 or from its command: tsc, vitest, node --test, archstrict, or "npm run
 <script>" (and "npm test") whose script runs one of them. "parser":
-"none" turns this off for one check.
+"none" turns this off for one check. A vitest diagnostic whose test
+depug's reporter named also gets "evidence: <path>" and "rerun:
+<command>" lines under it, and "evidence" and "rerun" fields in --json.
 
 Checks come from firstlight.json at the repository root; "run" is any
 shell command:

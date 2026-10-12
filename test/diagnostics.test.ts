@@ -53,7 +53,7 @@ test("vitest diagnostics name the test and the first frame in the project", () =
   ]);
 });
 
-test("vitest diagnostics skip the lines another reporter prints", () => {
+test("a vitest diagnostic carries the evidence file and rerun command depug printed for its test", () => {
   assert.deepEqual(parseFixture("vitest", "vitest-depug.txt"), [
     {
       file: "test/zz-broken.test.ts",
@@ -61,8 +61,57 @@ test("vitest diagnostics skip the lines another reporter prints", () => {
       col: 10,
       rule: "quotes a word with a space",
       message: "AssertionError: Expected values to be strictly equal: \"'a b'\" !== 'a b'",
+      evidence: "/repo/tmp/depug/run-20261012-101024-1110/001-quotes-a-word-with-a-space.json",
+      rerun: 'npx depug rerun -- npx vitest run "test/zz-broken.test.ts" -t "^quotes a word with a space$"',
     },
   ]);
+});
+
+const DEPUG_RUN = "/repo/tmp/depug/run-20261012-104006-22883";
+
+test("depug lines match a vitest diagnostic by test file and full name, and an ambiguous name gets none", () => {
+  assert.deepEqual(parseFixture("vitest", "vitest-depug-suites.txt"), [
+    {
+      file: "test/zz-depug-a.test.ts",
+      line: 7,
+      col: 12,
+      rule: "shellQuote > quotes a word with a space",
+      message: "AssertionError: Expected values to be strictly equal: \"'a b'\" !== 'a b'",
+      evidence: `${DEPUG_RUN}/002-shellquote-quotes-a-word-with-a-space.json`,
+      rerun: 'npx depug rerun -- npx vitest run "test/zz-depug-a.test.ts" -t "^shellQuote quotes a word with a space$"',
+    },
+    {
+      file: "test/zz-depug-a.test.ts",
+      line: 11,
+      col: 12,
+      rule: "shellQuote > keeps a plain word (no quotes) as it is",
+      message: "AssertionError: Expected values to be strictly equal: 'ab' !== \"'ab'\"",
+      evidence: `${DEPUG_RUN}/003-shellquote-keeps-a-plain-word-no-quotes-as-it-is.json`,
+      rerun: 'npx depug rerun -- npx vitest run "test/zz-depug-a.test.ts" -t "^shellQuote keeps a plain word \\\\(no quotes\\\\) as it is$"',
+    },
+    { file: "test/zz-depug-a.test.ts", line: 17, col: 12, rule: "split > a b", message: "AssertionError: Expected values to be strictly equal: 1 !== 2" },
+    { file: "test/zz-depug-a.test.ts", line: 23, col: 12, rule: "split a > b", message: "AssertionError: Expected values to be strictly equal: 3 !== 4" },
+    {
+      file: "test/zz-depug-b.test.ts",
+      line: 6,
+      col: 12,
+      rule: "shellQuote > quotes a word with a space",
+      message: "AssertionError: Expected values to be strictly deep-equal: + actual - expected",
+      evidence: `${DEPUG_RUN}/001-shellquote-quotes-a-word-with-a-space.json`,
+      rerun: 'npx depug rerun -- npx vitest run "test/zz-depug-b.test.ts" -t "^shellQuote quotes a word with a space$"',
+    },
+  ]);
+});
+
+test("a depug failure without a rerun line, or one named twice, attaches nothing", () => {
+  const log = readFileSync(path.join(FIXTURES, "vitest-depug.txt"), "utf8");
+  const withoutRerun = log.replace(/^depug rerun: .*\n/m, "");
+  const twice = log.replace(/^(depug evidence: .*\ndepug rerun: .*\n)/m, "$1$1");
+  for (const variant of [withoutRerun, twice]) {
+    const [diagnostic] = parseDiagnostics("vitest", variant, "/repo");
+    assert.equal(diagnostic!.evidence, undefined);
+    assert.equal(diagnostic!.rerun, undefined);
+  }
 });
 
 test("node:test diagnostics come from the spec reporter, with the full test name", () => {

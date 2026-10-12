@@ -257,6 +257,22 @@ In `--json`, the diagnostics follow their check's object, one line each:
 
 `line`, `col`, and `rule` are `null` when the tool has none. When a check has more than 20 diagnostics, its object has `more_diagnostics`, the number left out.
 
+### depug evidence and rerun
+
+When the vitest run uses [depug](https://www.npmjs.com/package/@meganemura/depug)'s reporter, depug prints an evidence file and a rerun command for each failed test. firstlight attaches both to that test's diagnostic, as two lines under it:
+
+```text
+test failed (exit 1, 3.2s)
+  test/names.test.ts:6:10 quotes a word with a space AssertionError: Expected values to be strictly equal: "'a b'" !== 'a b'
+    evidence: /.../tmp/depug/run-20261012-101024-1110/001-quotes-a-word-with-a-space.json
+    rerun: npx depug rerun -- npx vitest run "test/names.test.ts" -t "^quotes a word with a space$"
+  log: /.../test.log
+```
+
+In `--json`, the diagnostic line gets `evidence` (the absolute path) and `rerun` (the command) as two more fields. A diagnostic without them has neither field.
+
+firstlight matches by the test file and the full test name in depug's rerun command, against the file and the name in vitest's `FAIL` header. vitest joins the names with ` > ` and depug with a space, so two tests can look the same (`a > b c` and `a b > c`). When two failed tests, or two depug failures, have the same file and name, or when depug printed nothing for a test, firstlight attaches nothing to it. A log without depug lines gives the same diagnostics as before. This applies everywhere diagnostics show: `run`, `results`, `results --new`, and `follow`.
+
 ## Reused passes
 
 When a check already passed in a kept run on the same working tree, with the same command, `firstlight run` does not run it again. It reports the earlier pass:

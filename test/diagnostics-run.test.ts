@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { symlinkSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { onTestFinished, test } from "vitest";
 import { cleanup, cli, makeRepo, parseLines } from "./helpers.ts";
@@ -88,4 +88,48 @@ test("a failed check with more than 20 diagnostics prints 20 and counts the rest
   const lines = parseLines(json.stdout);
   assert.equal(lines[0]!.more_diagnostics, 3);
   assert.equal(lines.filter((line) => line.type === "diagnostic").length, 20);
+});
+
+test("a failed vitest check shows depug's evidence and rerun under the diagnostic in run, results, results --new, and follow", async () => {
+  const log = readFileSync(path.join(import.meta.dirname, "fixtures", "diagnostics", "vitest-depug.txt"), "utf8");
+  const repo = makeRepo({
+    "vitest.log": log,
+    "firstlight.json": { checks: { test: { run: "cat vitest.log; exit 1", parser: "vitest" } } },
+  });
+  onTestFinished(() => cleanup(repo));
+  const evidence = "/repo/tmp/depug/run-20261012-101024-1110/001-quotes-a-word-with-a-space.json";
+  const rerun = 'npx depug rerun -- npx vitest run "test/zz-broken.test.ts" -t "^quotes a word with a space$"';
+  const block = [
+    "  test/zz-broken.test.ts:6:10 quotes a word with a space AssertionError: Expected values to be strictly equal: \"'a b'\" !== 'a b'",
+    `    evidence: ${evidence}`,
+    `    rerun: ${rerun}`,
+    "  log: ",
+  ].join("\n");
+
+  const run = await cli(repo, ["run"]);
+  assert.equal(run.code, 1, run.stderr);
+  assert.ok(run.stdout.includes(`\n${block}`), run.stdout);
+
+  for (const args of [["results"], ["results", "--new"], ["follow"]]) {
+    const output = await cli(repo, args);
+    assert.equal(output.code, 1, output.stderr);
+    assert.ok(output.stdout.includes(`\n${block}`), `${args.join(" ")}:\n${output.stdout}`);
+  }
+
+  for (const args of [["results", "--json"], ["results", "--new", "--json"], ["follow", "--json"]]) {
+    const lines = parseLines((await cli(repo, args)).stdout);
+    assert.deepEqual(lines.filter((line) => line.type === "diagnostic"), [
+      {
+        type: "diagnostic",
+        check: "test",
+        file: "test/zz-broken.test.ts",
+        line: 6,
+        col: 10,
+        rule: "quotes a word with a space",
+        message: "AssertionError: Expected values to be strictly equal: \"'a b'\" !== 'a b'",
+        evidence,
+        rerun,
+      },
+    ], args.join(" "));
+  }
 });

@@ -2,7 +2,8 @@
 // JSON Lines (one object per check, then one summary) with --json. It only
 // formats a RunSnapshot and its estimate; deciding exit codes and next
 // commands is the CLI's. A failed check's log is read through its parser,
-// when it has one, so its diagnostics come before the tail. `results --new`
+// when it has one, so its diagnostics come before the tail, each with the
+// evidence file and rerun command depug printed for it, when there are. `results --new`
 // gets its own text and JSON here too, from a comparison the CLI made.
 
 import { countFailures, isUnproven, type CheckComparison } from "./baseline.ts";
@@ -132,6 +133,7 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, c
       col: diagnostic.col,
       rule: diagnostic.rule,
       message: diagnostic.message,
+      ...depugFields(diagnostic),
     }),
   );
   return [JSON.stringify(line), ...diagnostics].join("\n");
@@ -184,11 +186,22 @@ function logBlock(snapshot: RunSnapshot, view: CheckView, compared?: Compared): 
   const old = compared?.comparison?.oldDiagnostics ?? 0;
   const known = old === 0 ? [] : [`  (${old} ${plural(old, "diagnostic")} already in run ${compared!.baseline})`];
   return [
-    ...report.diagnostics.map((diagnostic) => `  ${formatDiagnostic(diagnostic)}`),
+    ...report.diagnostics.flatMap((diagnostic) => [`  ${formatDiagnostic(diagnostic)}`, ...depugLines(diagnostic)]),
     ...more,
     ...known,
     `  log: ${file}`,
     ...(report.tail.length === 0 ? ["    (no output)"] : report.tail.map((line) => `    ${line}`)),
+  ];
+}
+
+function depugFields(diagnostic: Diagnostic): { evidence?: string; rerun?: string } {
+  return diagnostic.evidence === undefined ? {} : { evidence: diagnostic.evidence, rerun: diagnostic.rerun };
+}
+
+function depugLines(diagnostic: Diagnostic): string[] {
+  return [
+    ...(diagnostic.evidence === undefined ? [] : [`    evidence: ${diagnostic.evidence}`]),
+    ...(diagnostic.rerun === undefined ? [] : [`    rerun: ${diagnostic.rerun}`]),
   ];
 }
 

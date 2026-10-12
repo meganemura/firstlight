@@ -7,7 +7,9 @@
 //
 // A parser never throws and never guesses: a line it does not recognize is
 // skipped, and a log with nothing it recognizes gives no diagnostics, so the
-// caller falls back to the plain log tail.
+// caller falls back to the plain log tail. A vitest diagnostic also gets the
+// evidence file and rerun command depug printed for its test, when exactly
+// one of each side names that test.
 
 export const PARSERS = ["tsc", "vitest", "node-test", "archstrict"] as const;
 export type ParserName = (typeof PARSERS)[number];
@@ -20,6 +22,9 @@ export interface Diagnostic {
   col: number | null;
   rule: string | null;
   message: string;
+  // Present together, and only on a vitest diagnostic that depug matched.
+  evidence?: string;
+  rerun?: string;
 }
 
 const MESSAGE_MAX = 300;
@@ -34,7 +39,7 @@ export function parseDiagnostics(parser: ParserName, log: string, root: string):
     case "tsc":
       return parseTsc(lines);
     case "vitest":
-      return parseVitest(lines, root);
+      return attachDepug(parseVitest(lines, root), depugFailures(lines));
     case "node-test":
       return lines.some((line) => /^TAP version \d+$/.test(line)) ? parseNodeTestTap(lines, root) : parseNodeTestSpec(lines, root);
     case "archstrict":
@@ -183,11 +188,19 @@ function parseTsc(lines: readonly string[]): Diagnostic[] {
 
 const VITEST_FRAME = /^\s*❯ (?:(.+) )?(\S+?):(\d+):(\d+)$/;
 
+// A vitest failure keeps the test file and full name of its header, which
+// the diagnostic's own file (the first project frame) can differ from.
+interface VitestFailure {
+  diagnostic: Diagnostic;
+  testFile: string;
+  name: string | null;
+}
+
 // vitest's default reporter: a ` FAIL  file > suite > test` header (or
 // ` FAIL  file [ file ]` for a file that failed to load), the error, then
 // `❯ [fn] file:line:col` frames, each followed by a code frame.
-function parseVitest(lines: readonly string[], root: string): Diagnostic[] {
-  const out: Diagnostic[] = [];
+function parseVitest(lines: readonly string[], root: string): VitestFailure[] {
+  const out: VitestFailure[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const header = /^ FAIL {2}(\S+?)(?: > (.+)| \[ .+ \])$/.exec(lines[i]!);
     if (header === null) continue;
@@ -208,16 +221,89 @@ function parseVitest(lines: readonly string[], root: string): Diagnostic[] {
       }
       if (inError) message.push(line);
     }
-    out.push({
+    const diagnostic: Diagnostic = {
       file: frame?.file ?? testFile,
       line: frame?.line ?? null,
       col: frame?.col ?? null,
       rule: header[2] ?? null,
       message: headline(message),
-    });
+    };
+    out.push({ diagnostic, testFile, name: header[2] ?? null });
     i = j - 1;
   }
   return out;
+}
+
+interface DepugFailure {
+  testFile: string;
+  // The suite and test names joined by a space, as vitest's -t matches them.
+  name: string;
+  evidence: string;
+  rerun: string;
+}
+
+const JSON_STRING = '"(?:[^"\\\\]|\\\\.)*"';
+const DEPUG_TARGET = new RegExp(`(?:^|\\s)vitest run (${JSON_STRING}) -t (${JSON_STRING})(?:\\s|$)`);
+const REGEX_METACHARACTER = /[.*+?^${}()|[\]\\]/g;
+
+// depug's vitest reporter prints `depug evidence: <absolute path> (<note>)`
+// and, on the next line, `depug rerun: <command>`. The command is the only
+// place that names the test: `vitest run "<file>" -t "<pattern>"`, both
+// JSON strings, where the pattern is the names joined by a space, with
+// regex metacharacters escaped, between `^` and `$`. A pattern that does
+// not escape back to itself is not depug's, so it names nothing.
+function depugFailures(lines: readonly string[]): DepugFailure[] {
+  const out: DepugFailure[] = [];
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const evidence = /^depug evidence: ((?:\/|[A-Za-z]:[\\/]).*?)(?: \([^()]*\))?$/.exec(lines[i]!);
+    if (evidence === null) continue;
+    const rerun = /^depug rerun: (\S.*)$/.exec(lines[i + 1]!);
+    if (rerun === null) continue;
+    i += 1;
+    const target = DEPUG_TARGET.exec(rerun[1]!);
+    if (target === null) continue;
+    let testFile: unknown;
+    let pattern: unknown;
+    try {
+      testFile = JSON.parse(target[1]!);
+      pattern = JSON.parse(target[2]!);
+    } catch {
+      continue;
+    }
+    if (typeof testFile !== "string" || typeof pattern !== "string") continue;
+    const anchored = /^\^(.*)\$$/s.exec(pattern);
+    if (anchored === null) continue;
+    const name = anchored[1]!.replace(/\\([.*+?^${}()|[\]\\])/g, "$1");
+    if (name.replace(REGEX_METACHARACTER, "\\$&") !== anchored[1]) continue;
+    out.push({ testFile, name, evidence: evidence[1]!, rerun: rerun[1]! });
+  }
+  return out;
+}
+
+// vitest's header joins the names with " > " and depug's pattern with a
+// space, so two tests can share a key ("a > b c" and "a b > c"), and a name
+// that itself holds " > " reads back as two names. The key names one test
+// only when exactly one diagnostic and one depug failure carry it.
+function attachDepug(failures: readonly VitestFailure[], depug: readonly DepugFailure[]): Diagnostic[] {
+  const keyOf = (testFile: string, name: string): string => JSON.stringify([testFile, name]);
+  const counts = new Map<string, number>();
+  for (const failure of failures) {
+    if (failure.name === null) continue;
+    const key = keyOf(failure.testFile, failure.name.split(" > ").join(" "));
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const byKey = new Map<string, DepugFailure[]>();
+  for (const entry of depug) {
+    const key = keyOf(entry.testFile, entry.name);
+    byKey.set(key, [...(byKey.get(key) ?? []), entry]);
+  }
+  return failures.map((failure) => {
+    if (failure.name === null) return failure.diagnostic;
+    const key = keyOf(failure.testFile, failure.name.split(" > ").join(" "));
+    const matches = byKey.get(key) ?? [];
+    if (counts.get(key) !== 1 || matches.length !== 1) return failure.diagnostic;
+    return { ...failure.diagnostic, evidence: matches[0]!.evidence, rerun: matches[0]!.rerun };
+  });
 }
 
 const STACK_FRAME = /^\s*at (?:.*? \()?(\S+?):(\d+):(\d+)\)?$/;
