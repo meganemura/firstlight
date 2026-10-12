@@ -1,0 +1,15 @@
+{
+  "name": "firstlight",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Run lint, typecheck, and tests in parallel for a coding agent, and return at the first failure.",
+  "type": "module",
+  "license": "MIT",
+  "author": "meganemura",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\""
+  }
+}
