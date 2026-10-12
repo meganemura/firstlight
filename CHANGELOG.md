@@ -25,3 +25,6 @@ Development:
 - The tests moved from `node:test` to vitest and assert the same behavior.
 - `firstlight.json` makes firstlight check itself: `typecheck`, `test`, `archstrict`, and a scoped `mutation` run, in parallel.
 - CI runs `npm ci`, `npm test`, `npm run typecheck`, and `npm run archstrict` on Node 24, with the actions pinned to commits.
+- The package is ready to publish to npm as `firstlight`: `npm i -D firstlight` installs a `firstlight` bin. `npm run build` compiles `src/` to `dist/` with tsc, rewriting the `.ts` relative imports to `.js`, because Node does not strip types from files under `node_modules`. `prepack` runs the build, and the tarball holds `dist/`, `README.md`, `CHANGELOG.md`, `LICENSE`, and `package.json`. The supervisor starts from the same compiled file as the CLI.
+- `test/pack.test.ts` packs the package, installs the tarball into a temporary project, and runs the installed bin: `--help`, and a `firstlight run` of a passing shell command.
+- `.github/workflows/publish.yml` publishes a `v*` tag to npm through a trusted publisher after the GitHub Environment `publish` approves it, with provenance, then creates the GitHub release from that version's changelog section. `docs/releasing.md` lists the one-time bootstrap, which is not done yet, and the steps for each version. `SECURITY.md` points to private vulnerability reporting.

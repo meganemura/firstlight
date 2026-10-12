@@ -4,3 +4,4 @@ node_modules/
 reports/
 .stryker-tmp/
 tmp/
+dist/

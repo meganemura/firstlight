@@ -26,6 +26,9 @@ The user-facing description is in `README.md`.
 - `src/errors.ts`: the `{"error","do"}` envelope.
 - `test/*.test.ts`: vitest tests. Most run the real CLI as a child process against temporary git repositories, each with its own `XDG_STATE_HOME`. `test/helpers.ts` holds the fixtures. `test/*.property.test.ts` are Hegel property tests of the pure parts: the state machine, `after` validation, run ids, the time-left estimate, cache keys and reuse, the script pattern match, and log file names.
 - `archstrict.config.ts`: the module boundaries and the layer order, `cache.ts`, `checks.ts`, `eta.ts`, and `names.ts` at the bottom, then `config.ts`, `errors.ts`, `processes.ts`, `store.ts`, and `tree.ts`, then `report.ts` and `supervisor.ts`, then `cli.ts`. Every module is strict, and `archstrict.todo.json` is empty.
+- `test/pack.test.ts`: packs the package with `npm pack`, installs the tarball into a temporary project, and runs the installed `firstlight` bin. It is the only test that reaches `dist/`.
+- `tsconfig.build.json`: the build. It compiles `src/` to `dist/` (gitignored) and rewrites `.ts` relative imports to `.js`. The supervisor is `dist/cli.js` started again, so the published package spawns plain JavaScript.
+- `.github/workflows/publish.yml` and `docs/releasing.md`: the npm release through a trusted publisher on a `v*` tag, and the one-time bootstrap that is still to do.
 - `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`.
 - `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
 
@@ -34,7 +37,7 @@ The user-facing description is in `README.md`.
 - Runtime code uses Node built-ins only (no runtime dependencies). Development uses the owner's toolchain: vitest, Hegel (`@hegeldev/hegel`), archstrict, Stryker with stryker-agent-reporter, and depug (`@meganemura/depug`). Ask the owner before you add any other dependency. Pin exact versions, at least 7 days past release, with no later security fix superseding them.
 - Write tests with Hegel wherever a property exists: invariants, round trips, ordering. Example tests cover exact CLI output and JSON shape.
 - `src/` runs directly through Node's type stripping: use erasable TypeScript syntax only (no enum, no namespace, no parameter properties), and write `.ts` extensions in relative imports.
-- There is no `bin` entry yet. Node does not strip types from files under `node_modules`, so publishing needs a build step first.
+- Node does not strip types from files under `node_modules`, so the package ships `dist/`, compiled by `npm run build`. Do not point `bin` or a test of the installed package at `src/`.
 - Write all committed text in English. Do not reference private tools or internal working documents.
 - Comments say why: keep a comment only for a reason the code cannot show. Each module starts with a short comment on its responsibility and boundary. A test gets no comments that narrate its steps; the assertion documents the step.
 - Do not use em-dash characters in prose.
@@ -47,6 +50,8 @@ The user-facing description is in `README.md`.
 - `npm run typecheck` runs `tsc --noEmit` over `src/`, `test/`, and the root `*.ts` files. tsc only checks; Node runs the sources directly.
 - `npm run archstrict` runs `archstrict check`.
 - `npm run mutation` runs Stryker over `src/` except `cli.ts` and `supervisor.ts`. `npm run mutation -- --mutate src/checks.ts` narrows it to one file.
+- `npm run build` compiles `src/` to `dist/` with `tsconfig.build.json`, after it removes the old `dist/`. Only the pack test needs it, and `npm pack` runs it through `prepack`.
+- `npm pack --dry-run` prints the tarball's file list: `dist/`, `README.md`, `CHANGELOG.md`, `LICENSE`, and `package.json`.
 - `node src/cli.ts run` runs firstlight on this repository with `firstlight.json`. `node src/cli.ts run --cwd <repo>` runs it against another repository.
 
 ## archstrict

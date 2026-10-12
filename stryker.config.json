@@ -8,6 +8,6 @@
   "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/supervisor.ts"],
   "mutate_comment": "The tests reach cli.ts and supervisor.ts only through child processes, which never see the active mutant, so their mutants could only report no coverage.",
   "disableTypeChecks": "src/**/*.ts",
-  "ignorePatterns": ["/tmp", "/reports", "/.hegel"],
+  "ignorePatterns": ["/tmp", "/reports", "/.hegel", "/dist"],
   "cleanTempDir": true
 }

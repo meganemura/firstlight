@@ -73,13 +73,24 @@ firstlight has no sequential `run-s` mode and none of npm-run-all's other flags.
 
 ## Install
 
-Requires Node.js 24 or newer. firstlight is not published yet. Node strips TypeScript types when it runs the source, so from a checkout:
+Requires Node.js 24 or newer. Add it to a project as a development dependency:
+
+```sh
+npm i -D firstlight
+npx firstlight --help
+```
+
+Or run it once without adding it:
+
+```sh
+npx firstlight run
+```
+
+The package holds JavaScript compiled from `src/` and has no runtime dependencies. From a checkout, Node strips the TypeScript types and runs the source directly, with no build:
 
 ```sh
 node src/cli.ts --help
 ```
-
-firstlight has no runtime dependencies, so running it from a checkout needs no install. A published package will need a build step first, because Node does not strip types from files under `node_modules`.
 
 ## Config
 
@@ -228,7 +239,11 @@ npm test              # vitest, with Hegel property tests
 npm run typecheck     # tsc --noEmit; Node runs the sources directly
 npm run archstrict    # module boundaries and the layer order
 npm run mutation      # Stryker, with the agent reporter
+npm run build         # tsc to dist/, the JavaScript the package ships
+npm pack --dry-run    # the tarball's file list; prepack runs the build
 ```
+
+`test/pack.test.ts` packs the package, installs the tarball into a temporary project, and runs the installed `firstlight` bin, so `npm test` covers the published form too. Releases follow [docs/releasing.md](docs/releasing.md).
 
 A failed test prints a depug evidence file and the command that reruns that one test.
 

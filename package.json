@@ -1,19 +1,46 @@
 {
   "name": "firstlight",
   "version": "0.0.0",
-  "private": true,
   "description": "Run lint, typecheck, and tests in parallel for a coding agent, and return at the first failure.",
-  "type": "module",
+  "keywords": [
+    "parallel",
+    "checks",
+    "lint",
+    "typecheck",
+    "test-runner",
+    "npm-run-all",
+    "coding-agents"
+  ],
   "license": "MIT",
   "author": "meganemura",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meganemura/firstlight.git"
+  },
+  "homepage": "https://github.com/meganemura/firstlight#readme",
+  "bugs": {
+    "url": "https://github.com/meganemura/firstlight/issues"
+  },
+  "type": "module",
+  "bin": {
+    "firstlight": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "archstrict": "archstrict check",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@hegeldev/hegel": "0.4.5",
