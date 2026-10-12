@@ -38,7 +38,7 @@ Requires Node.js 24 or newer. firstlight is not published yet. Node strips TypeS
 node src/cli.ts --help
 ```
 
-There are no dependencies to install. A published package will need a build step first, because Node does not strip types from files under `node_modules`.
+firstlight has no runtime dependencies, so running it from a checkout needs no install. A published package will need a build step first, because Node does not strip types from files under `node_modules`.
 
 ## Config
 
@@ -128,6 +128,24 @@ Each run has one detached supervisor process. It starts the checks, waits on the
 - No parsing of diagnostics. firstlight shows the log tail as it is.
 - No cache. Every run starts every selected check.
 - No daemon, no queue, and no watch mode.
+
+## Development
+
+```sh
+npm ci
+npm test              # vitest, with Hegel property tests
+npm run typecheck     # tsc --noEmit; Node runs the sources directly
+npm run archstrict    # module boundaries and the layer order
+npm run mutation      # Stryker, with the agent reporter
+```
+
+A failed test prints a depug evidence file and the command that reruns that one test.
+
+firstlight checks itself. `firstlight.json` in this repository runs `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`, all in parallel:
+
+```sh
+node src/cli.ts run
+```
 
 ## License
 

@@ -1,0 +1,8 @@
+{
+  "checks": {
+    "typecheck": { "run": "npm run typecheck" },
+    "test": { "run": "npm test" },
+    "archstrict": { "run": "npm run archstrict" },
+    "mutation": { "run": "npm run mutation -- --mutate src/checks.ts,src/config.ts", "timeoutSec": 300 }
+  }
+}

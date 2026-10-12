@@ -13,3 +13,10 @@ The first version of firstlight.
 - A detached supervisor per run starts the checks, each in its own process group, and records every status change in `events.jsonl` under `$XDG_STATE_HOME/firstlight/`. Nothing is written into the checked repository. The newest 20 runs are kept.
 - If the supervisor dies before a check finishes, that check is reported as `unknown` with `orphan: true`, and no exit code is invented.
 - `--json` prints JSON Lines: one object per check and one summary. A failure of firstlight itself prints `{"error","do"}` on stderr and exits 1.
+
+Development:
+
+- Runtime code still uses Node built-ins only. Development now uses TypeScript for `npm run typecheck`, vitest for `npm test`, Hegel property tests for the state machine, `after` validation, and run ids, archstrict for module boundaries and the layer order (`npm run archstrict`), Stryker with stryker-agent-reporter for mutation testing (`npm run mutation`), and depug, which prints an evidence file and a rerun command for each failed test. Every version is pinned exactly.
+- The tests moved from `node:test` to vitest and assert the same behavior.
+- `firstlight.json` makes firstlight check itself: `typecheck`, `test`, `archstrict`, and a scoped `mutation` run, in parallel.
+- CI runs `npm ci`, `npm test`, `npm run typecheck`, and `npm run archstrict` on Node 24, with the actions pinned to commits.
