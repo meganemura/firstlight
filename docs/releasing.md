@@ -10,15 +10,23 @@ After `npm publish` succeeds, a second job creates the GitHub release for that t
 
 An environment and a trusted publisher create no state in this repository; they exist only in GitHub's and npm's own settings. Create them once, using the values below, before the first release.
 
-## Bootstrap: done with a placeholder, except the last step
+## Bootstrap
 
-npm lets a trusted publisher be added only to a package that already exists. The bootstrap for this package:
+npm lets a trusted publisher be added only to a package that already exists, so the first version of the package is published by hand.
 
-1. On 2026-10-12, the owner published a placeholder `0.0.1` from a local `npm login` session. It holds the package name and no code: `package.json`, `README.md`, and `LICENSE`. No access token was created for it. A `0.0.0-stage` version from the same session is also on npm; it is not `latest`, and it stays as it is.
-2. On 2026-10-12, the owner added the GitHub Actions trusted publisher on npmjs.com, with the values under "Trusted publisher" below, and created the GitHub Environment `publish` with required reviewers.
-3. Still to do: `0.1.0`, the first usable version, is the first publish through OIDC, with provenance. After it succeeds, in the package settings on npmjs.com, require two-factor authentication and disallow token publishing, then update this section with the date.
+What happened on 2026-10-12:
 
-Do not repeat steps 1 and 2. A manual publish is needed again only if the package is deleted from npm.
+1. The owner published a placeholder `0.0.1`, and a `0.0.0-stage`, from a local `npm login` session, added the GitHub Actions trusted publisher on npmjs.com with the values under "Trusted publisher" below, and created the GitHub Environment `publish` with required reviewers.
+2. `0.1.0` was published through `publish.yml` with OIDC and provenance.
+3. About seven minutes later, `npm unpublish firstlight@0.0.1` and then `npm unpublish firstlight@0.0.0-stage` removed the whole package, `0.1.0` included. npm blocks a removed name for 24 hours, and the numbers `0.0.0-stage`, `0.0.1`, and `0.1.0` can never be published again. Do not unpublish a version of this package: deprecate it with `npm deprecate` instead.
+
+The bootstrap again, for `0.2.0`, after the block ends on 2026-10-13 at 10:21 UTC:
+
+1. On a clean checkout of the `release: 0.2.0` commit: `npm ci`, `npm run build`, `npm test`, `npm run typecheck`, `npm run archstrict`, then `npm pack --dry-run`, and check that the list holds `dist/cli.js`. Without `npm ci`, `prepack` cannot build, and the tarball has no `dist/`.
+2. `npm publish --access public` from a local `npm login` session. This version has no provenance.
+3. In the package settings on npmjs.com, check the trusted publisher against "Trusted publisher" below, and add it again if the removal deleted it.
+4. Push the tag `v0.2.0`. `publish.yml` starts and waits on the Environment `publish`: reject it, because `0.2.0` is already on npm. Create the GitHub release by hand with the commands at the end of "Each version".
+5. Require two-factor authentication and disallow token publishing in the package settings, then update this section with the date. `0.2.1` or `0.3.0` is the first publish through OIDC again.
 
 ## Trusted publisher
 
@@ -60,7 +68,7 @@ Turn on the repository's `sha_pinning_required` setting, so a workflow that name
 7. After `npm publish` succeeds, the workflow's `release` job creates the GitHub release. It checks out the tag, extracts only that version's section from `CHANGELOG.md`, and runs `gh release create` with `--notes-file` and `--verify-tag`. A notes file that is the whole changelog would carry every version, so the job keeps the section whose heading is `## <version> ` (a space after the version). A release that already exists stays as it is, so a re-run of the same tag is safe. If that job fails, extract the section and create the release by hand. Set `version` to the version you tagged:
 
    ```sh
-   version=0.1.0
+   version=0.2.0
    awk -v v="$version" '$0 ~ "^## " v " " {in_version=1; next} /^## /{in_version=0} in_version' CHANGELOG.md > notes.md
    gh release create "v$version" --title "v$version" --notes-file notes.md --verify-tag
    ```
