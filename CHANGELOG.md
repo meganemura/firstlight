@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Without `firstlight.json`, `firstlight run` names the `package.json` scripts it did not run whose name starts with `lint`, `typecheck`, `test`, `check`, or `archstrict` (for example `check:architecture`, `test:mutation`, or `check`), on a `not run:` line after its result, with a hint to name one or list it in `firstlight.json`. With `--json`, the summary gains `not_run`, only when that list is not empty. It still runs only `lint`, `typecheck`, `test`, and `archstrict`, because such a script can chain the others or take hours. When none of those four exists, the error envelope names the check-like scripts and its `do` runs them.
+
 - Once every check of a run is done and one did not pass, the next command that `run`, `results`, `results --new`, and `follow` print is `firstlight run --failed` instead of `firstlight run`, in the text `next:` line and the `next` field of `--json`. While a check is still running, it stays `firstlight results --wait`. The `do` of an error envelope does not change, and neither does the next command after `stop`.
 
 - On a Node older than 24, every command stops before it reads its arguments or starts a run, and prints the error envelope `{"error":"firstlight needs Node 24 or newer (found v20.19.0)","do":"install Node 24 or newer, then rerun the same command"}` with exit code 1. Before, an older Node could run firstlight on a version it was never tested on.

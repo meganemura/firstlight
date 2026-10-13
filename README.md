@@ -127,6 +127,15 @@ A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._-]*`, so th
 
 Without `firstlight.json`, each of the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` that exists becomes a check that runs `npm run <name>`, with no `after`.
 
+Other scripts whose name starts with one of those words or with `check` (`check:architecture`, `test:mutation`, `check`) are not run, because such a script can chain the others or take hours. `firstlight run` names them instead, after its result:
+
+```text
+passed 2 checks in 79.5s (run 01K...)
+not run: check:architecture, test:mutation (without firstlight.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or list it in firstlight.json)
+```
+
+With `--json`, the summary gains `"not_run": ["check:architecture", "test:mutation"]`. When none of the four scripts exists, the error envelope names those scripts and suggests running them.
+
 The repository root is `git rev-parse --show-toplevel` from the current directory, or the current directory when that fails. `--cwd DIR` starts from `DIR` instead.
 
 ## Commands

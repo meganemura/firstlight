@@ -115,7 +115,9 @@ shell command:
               "types": {"run": "make types", "parser": "tsc"}}}
 To run checks in order, give a check "after" in firstlight.json. Without
 firstlight.json, "firstlight run" runs the package.json scripts lint,
-typecheck, test, and archstrict.
+typecheck, test, and archstrict, and names the other scripts that start
+with one of those words or with "check" (check:architecture, test:e2e)
+on a "not run:" line, without running them.
 
 Exit codes:
   0  every check passed (run), or no check failed or was cancelled
@@ -229,6 +231,7 @@ type Selection = "failed" | { names: string[]; commands: string[] };
 async function runCommand(ctx: Context, selection: Selection, useCache: boolean): Promise<number> {
   const previous = ctx.state.currentId();
   let checks: CheckSpec[];
+  let notRun: string[] = [];
   if (selection === "failed") {
     if (previous === null) {
       throw new AgentError(`no run yet for ${ctx.state.root}, so no check has failed`, cmd(ctx, "run"));
@@ -241,10 +244,13 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
     checks = failedChecks(ctx, previous, configured);
   } else {
     const { names, commands } = selection;
-    checks =
-      names.length === 0 && commands.length === 0
-        ? loadConfig(ctx.state.root).checks
-        : resolveRun(ctx.state.root, names, commands);
+    if (names.length === 0 && commands.length === 0) {
+      const config = loadConfig(ctx.state.root);
+      checks = config.checks;
+      notRun = config.notRun;
+    } else {
+      checks = resolveRun(ctx.state.root, names, commands);
+    }
     if (previous !== null) await stopRun(ctx.state, previous);
   }
   checks = withParsers(ctx.state.root, checks);
@@ -287,17 +293,17 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
     const first = firstFailure(snapshot.checks);
     if (first !== null) {
       const next = snapshot.checks.every(isSettled) ? cmd(ctx, "run --failed") : cmd(ctx, "results --wait");
-      out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta, first.name));
+      out(ctx.json ? jsonLines(snapshot, next, eta, notRun) : text(snapshot, next, eta, first.name, notRun));
       return 1;
     }
     if (snapshot.checks.every(isSettled)) {
       if (snapshot.checks.every((view) => view.status === "passed")) {
-        out(ctx.json ? jsonLines(snapshot, null, eta) : allPassedText(snapshot));
+        out(ctx.json ? jsonLines(snapshot, null, eta, notRun) : allPassedText(snapshot, notRun));
         return 0;
       }
       const superseded = ctx.state.currentId() !== run.id;
       const next = superseded ? cmd(ctx, "results --wait") : cmd(ctx, "run --failed");
-      out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
+      out(ctx.json ? jsonLines(snapshot, next, eta, notRun) : text(snapshot, next, eta, null, notRun));
       return 1;
     }
     await sleep(POLL_MS);

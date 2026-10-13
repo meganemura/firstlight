@@ -75,6 +75,37 @@ test("without firstlight.json the package.json scripts become checks", async () 
   assert.match(readFileSync(lint.log as string, "utf8"), /\nlint-ok\n/);
 });
 
+test("without firstlight.json the check-like scripts it did not run are named, in text and in --json", async () => {
+  const repo = makeRepo({
+    "package.json": {
+      scripts: { test: "true", "check:architecture": "exit 1", build: "exit 1", "test:mutation": "exit 1", check: "exit 1" },
+    },
+  });
+  onTestFinished(() => cleanup(repo));
+
+  const run = await cli(repo, ["run"]);
+  assert.equal(run.code, 0, run.stderr);
+  assert.match(
+    run.stdout,
+    /^passed 1 check in [\d.]+s \(run \w+\)\nnot run: check:architecture, test:mutation, check \(without firstlight\.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or list it in firstlight\.json\)\n$/,
+  );
+
+  const json = await cli(repo, ["run", "--json"]);
+  assert.deepEqual(parseLines(json.stdout).at(-1)!.not_run, ["check:architecture", "test:mutation", "check"]);
+
+  const named = await cli(repo, ["run", "test", "--json"]);
+  assert.equal(parseLines(named.stdout).at(-1)!.not_run, undefined);
+});
+
+test("with only check-like scripts outside the fallback, the envelope names them", async () => {
+  const { root, result, body } = await envelope({ "package.json": { scripts: { "check:sql": "true", "lint:js": "true", build: "true" } } });
+  assert.equal(result.code, 1);
+  assert.deepEqual(body, {
+    error: `no checks found in ${root}: there is no firstlight.json and package.json has no lint, typecheck, test, archstrict script (scripts that look like checks: check:sql, lint:js)`,
+    do: `run \`firstlight run check:sql lint:js\`, or list them in ${root}/firstlight.json`,
+  });
+});
+
 test("--help prints plain text and exits 0", async () => {
   const repo = makeRepo({});
   onTestFinished(() => cleanup(repo));

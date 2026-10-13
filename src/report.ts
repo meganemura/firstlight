@@ -8,6 +8,7 @@
 
 import { countFailures, isUnproven, type CheckComparison } from "./baseline.ts";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
+import { FALLBACK_SCRIPTS } from "./config.ts";
 import { formatDiagnostic, isParserName, parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
 import { logPaths, readLogEnd, tailLines, type RunRecord, type RunSnapshot } from "./store.ts";
@@ -69,9 +70,10 @@ export interface Summary {
   cancelled: string[];
   next: string | null;
   eta_ms: number | null;
+  not_run?: string[];
 }
 
-export function summarize(snapshot: RunSnapshot, next: string | null, eta: RunEta): Summary {
+export function summarize(snapshot: RunSnapshot, next: string | null, eta: RunEta, notRun: string[] = []): Summary {
   const summary: Summary = {
     type: "summary",
     run: snapshot.run.id,
@@ -83,6 +85,7 @@ export function summarize(snapshot: RunSnapshot, next: string | null, eta: RunEt
     eta_ms: roundMs(eta.eta_ms),
   };
   for (const view of snapshot.checks) summary[bucketOf(view.status)].push(view.name);
+  if (notRun.length > 0) summary.not_run = notRun;
   return summary;
 }
 
@@ -90,9 +93,9 @@ function showsLog(view: CheckView): boolean {
   return view.status === "failed" || view.status === "timed_out";
 }
 
-export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEta): string {
+export function jsonLines(snapshot: RunSnapshot, next: string | null, eta: RunEta, notRun: string[] = []): string {
   const lines = snapshot.checks.map((view) => checkJson(snapshot, view, eta));
-  lines.push(JSON.stringify(summarize(snapshot, next, eta)));
+  lines.push(JSON.stringify(summarize(snapshot, next, eta, notRun)));
   return `${lines.join("\n")}\n`;
 }
 
@@ -141,7 +144,13 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, c
 
 // `focus` puts one check first with its log, as `run` does for the check
 // that failed first; the others get one status line each.
-export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, focus: string | null = null): string {
+export function text(
+  snapshot: RunSnapshot,
+  next: string | null,
+  eta: RunEta,
+  focus: string | null = null,
+  notRun: string[] = [],
+): string {
   const out: string[] = [];
   const ordered =
     focus === null
@@ -151,7 +160,7 @@ export function text(snapshot: RunSnapshot, next: string | null, eta: RunEta, fo
     out.push(statusLine(snapshot, view, eta));
     if (showsLog(view) && (focus === null || view.name === focus)) out.push(...logBlock(snapshot, view));
   }
-  return `${out.join("\n")}\n${summaryText(snapshot, next, eta)}`;
+  return `${out.join("\n")}\n${notRunText(notRun)}${summaryText(snapshot, next, eta)}`;
 }
 
 // The lines after the check lines: the counts, then the next command.
@@ -279,12 +288,19 @@ function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
-export function allPassedText(snapshot: RunSnapshot): string {
+// Only a run without firstlight.json has these: the check-like scripts the
+// package.json fallback did not run.
+export function notRunText(notRun: string[]): string {
+  if (notRun.length === 0) return "";
+  return `not run: ${notRun.join(", ")} (without firstlight.json, only ${FALLBACK_SCRIPTS.join(", ")} run; name a script, like firstlight run ${notRun[0]}, or list it in firstlight.json)\n`;
+}
+
+export function allPassedText(snapshot: RunSnapshot, notRun: string[] = []): string {
   const seconds = (Date.now() - Date.parse(snapshot.run.started_at)) / 1000;
   const count = snapshot.checks.length;
   const cached = cachedCount(snapshot);
   const notes = cached === 0 ? `run ${snapshot.run.id}` : `${cached} cached, run ${snapshot.run.id}`;
-  return `passed ${count} check${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s (${notes})\n`;
+  return `passed ${count} check${count === 1 ? "" : "s"} in ${seconds.toFixed(1)}s (${notes})\n${notRunText(notRun)}`;
 }
 
 function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {

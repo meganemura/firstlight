@@ -16,6 +16,11 @@ import { expandPattern, isPattern, shellQuote } from "./names.ts";
 export const CONFIG_FILE = "firstlight.json";
 export const DEFAULT_TIMEOUT_SEC = 600;
 export const FALLBACK_SCRIPTS = ["lint", "typecheck", "test", "archstrict"] as const;
+// Script names that look like a check by their first ":" segment. The
+// fallback does not run them: a name like test:mutation or check can take
+// hours or chain the others, so a guess would duplicate or stall work. They
+// are only named, so the reader can pick.
+const CHECK_LIKE = new Set(["lint", "typecheck", "test", "check", "archstrict"]);
 
 // A configured name is one plain word, never whitespace or "*", so an
 // argument of `firstlight run` that names it cannot also read as a shell
@@ -26,21 +31,33 @@ const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser"]);
 export interface Config {
   source: "firstlight.json" | "package.json";
   checks: CheckSpec[];
+  // The check-like package.json scripts the fallback left out, in
+  // package.json order; empty when firstlight.json decides the checks.
+  notRun: string[];
 }
 
 export function loadConfig(root: string): Config {
   const configPath = path.join(root, CONFIG_FILE);
   const text = readOptional(configPath);
   if (text !== null) {
-    return { source: "firstlight.json", checks: parseConfig(text, configPath) };
+    return { source: "firstlight.json", checks: parseConfig(text, configPath), notRun: [] };
   }
   const scripts = readScripts(path.join(root, "package.json")) ?? [];
   const checks = FALLBACK_SCRIPTS.filter((name) => scripts.includes(name)).map(scriptCheck);
-  if (checks.length > 0) return { source: "package.json", checks };
+  const notRun = checkLikeScripts(scripts);
+  if (checks.length > 0) return { source: "package.json", checks, notRun };
+  const named = notRun.length === 0 ? "" : ` (scripts that look like checks: ${notRun.join(", ")})`;
   throw new AgentError(
-    `no checks found in ${root}: there is no ${CONFIG_FILE} and package.json has no ${FALLBACK_SCRIPTS.join(", ")} script`,
-    `create ${configPath} like {"checks": {"test": {"run": "npm test"}}}, then run \`firstlight run\``,
+    `no checks found in ${root}: there is no ${CONFIG_FILE} and package.json has no ${FALLBACK_SCRIPTS.join(", ")} script${named}`,
+    notRun.length === 0
+      ? `create ${configPath} like {"checks": {"test": {"run": "npm test"}}}, then run \`firstlight run\``
+      : `run \`firstlight run ${notRun.map(shellQuote).join(" ")}\`, or list them in ${configPath}`,
   );
+}
+
+export function checkLikeScripts(scripts: readonly string[]): string[] {
+  const fallback: readonly string[] = FALLBACK_SCRIPTS;
+  return scripts.filter((name) => !fallback.includes(name) && CHECK_LIKE.has(name.split(":")[0]!));
 }
 
 export function parseConfig(text: string, file: string): CheckSpec[] {

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { test } from "vitest";
-import { parseConfig } from "../src/config.ts";
+import { checkLikeScripts, FALLBACK_SCRIPTS, parseConfig } from "../src/config.ts";
 import { AgentError } from "../src/errors.ts";
 
 type Graph = Map<string, Set<string>>;
@@ -81,4 +81,27 @@ test("every generated cycle is rejected, and the reported cycle is in the graph"
     },
     { testCases: 200 },
   );
+});
+
+test("the check-like scripts keep package.json order and leave out the fallback scripts and every other name", () => {
+  const words = ["lint", "typecheck", "test", "check", "archstrict", "build", "prepack", "checks", "testing"];
+  hegel.test((tc) => {
+    const count = tc.draw(gs.integers({ minValue: 0, maxValue: 8 }));
+    const scripts = [
+      ...new Set(
+        Array.from({ length: count }, () => {
+          const head = tc.draw(gs.sampledFrom(words));
+          return tc.draw(gs.booleans()) ? `${head}:${tc.draw(gs.sampledFrom(words))}` : head;
+        }),
+      ),
+    ];
+    const picked = checkLikeScripts(scripts);
+    assert.deepEqual(picked, scripts.filter((name) => picked.includes(name)));
+    for (const name of scripts) {
+      const head = name.split(":")[0]!;
+      const fallback = (FALLBACK_SCRIPTS as readonly string[]).includes(name);
+      const checkLike = ["lint", "typecheck", "test", "check", "archstrict"].includes(head);
+      assert.equal(picked.includes(name), checkLike && !fallback, name);
+    }
+  });
 });
