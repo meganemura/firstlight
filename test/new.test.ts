@@ -28,7 +28,7 @@ test("results --new reports only the tsc errors the previous run did not have, e
   );
   assert.match(
     first.stdout,
-    new RegExp(`\\nno earlier run to compare with, so every failure counts as new\\nrun ${firstId}: 1 new failure\\nnext: firstlight run\\n$`),
+    new RegExp(`\\nno earlier run to compare with, so every failure counts as new\\nrun ${firstId}: 1 new failure\\nnext: firstlight run --failed\\n$`),
   );
 
   writeFileSync(path.join(repo.root, "a.ts"), "\n\nexport const x: string = 1;\nexport const y: number = missing;\n");
@@ -45,7 +45,7 @@ test("results --new reports only the tsc errors the previous run did not have, e
   assert.doesNotMatch(second.stdout, /^ {2}a\.ts:\d+:\d+ TS2322/m);
   assert.match(
     second.stdout,
-    new RegExp(`\\nnot new: 1 failure already in the previous run\\nrun ${secondId}: 1 new failure\\nnext: firstlight run\\n$`),
+    new RegExp(`\\nnot new: 1 failure already in the previous run\\nrun ${secondId}: 1 new failure\\nnext: firstlight run --failed\\n$`),
   );
 
   const json = await cli(repo, ["results", "--new", "--json"]);
@@ -74,7 +74,7 @@ test("results --new reports only the tsc errors the previous run did not have, e
     running: [],
     passed: [],
     cancelled: [],
-    next: "firstlight run",
+    next: "firstlight run --failed",
     eta_ms: 0,
     new: ["typecheck"],
     new_failures: 1,
@@ -113,7 +113,7 @@ test("results --new compares each check without diagnostics with the newest earl
   const waited = await cli(repo, ["results", "--new", "--wait"]);
   assert.equal(waited.code, 1, waited.stderr);
   assert.match(waited.stdout, /^a failed \(exit 1, \d+\.\ds\)\n {2}log: /);
-  assert.match(waited.stdout, new RegExp(`\\nnot new: 2 passed\\nrun ${currentRun(repo).id}: 1 new failure\\nnext: firstlight run\\n$`));
+  assert.match(waited.stdout, new RegExp(`\\nnot new: 2 passed\\nrun ${currentRun(repo).id}: 1 new failure\\nnext: firstlight run --failed\\n$`));
 
   writeFileSync(path.join(repo.root, "broken-b"), "");
   await cli(repo, ["run", "--failed"]);

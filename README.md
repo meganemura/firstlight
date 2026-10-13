@@ -40,6 +40,8 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
 
    It returns at the first failed or timed-out check, with the last 40 lines of that check's log, the status of every other check, and the next command. When firstlight can read that tool's output, the check's [diagnostics](#diagnostics) come first and the log tail is 10 lines. If every check passes, it prints one line and exits 0.
 
+   While other checks are still running, the next command is `firstlight results --wait`.
+
 2. Fix the failure. Meanwhile, the other checks continue.
 
 3. Read the rest:
@@ -50,16 +52,16 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
 
    Or watch each check finish as it happens, with `firstlight follow`.
 
-4. Run again. This cancels anything left from step 1:
-
-   ```sh
-   firstlight run lint typecheck test
-   ```
-
-   Or run only what did not pass the last time:
+4. Run only what did not pass. Once every check is done and one failed, this is the next command that `results` and `follow` print. It cancels anything left from step 1:
 
    ```sh
    firstlight run --failed
+   ```
+
+   Or run every check again:
+
+   ```sh
+   firstlight run lint typecheck test
    ```
 
 ## Arguments of `run`
@@ -178,7 +180,7 @@ lint failed (exit 1, 0.4s)
     src/a.ts:3:1 unused variable x
 test passed (exit 0, 10.4s)
 run 01K...: 1 failed, 1 passed
-next: firstlight run
+next: firstlight run --failed
 ```
 
 A `running` line shows the time left that firstlight estimated when the check started, when there is one. A failed or timed-out check has the same [diagnostics](#diagnostics) and log tail that `run` prints. A reused pass says `cached from run 01K...`, and a check whose supervisor died appears as `unknown` at the end. With `--json`, each change is one check object, in the same shape as `results --json`, followed by the diagnostic lines of a failed check, and the last line is the summary object.
@@ -197,7 +199,7 @@ typecheck failed (exit 2, 1.4s)
     ...
 not new: 1 failure already in the previous run, 2 passed
 run 01K...: 1 new failure
-next: firstlight run
+next: firstlight run --failed
 ```
 
 The previous run is chosen per check: it is the newest kept run before the latest one in which a check with the same name and the same `run` command `passed`, `failed`, or `timed_out`. A run in which that check was `cancelled`, `skipped`, or never finished is passed over, because it proved nothing either way. This is per check, not one run for all, because `run --failed` and `run <name>` leave runs that hold only some of the checks.
@@ -217,7 +219,7 @@ With `--json`, every check object of `results --json` comes, with two more field
 ```json
 {"type":"check","name":"typecheck","status":"failed","exit_code":2,"elapsed_ms":1412,"log":"/.../typecheck.log","eta_ms":0,"overdue":false,"cached_from":null,"new":true,"baseline":"01K...","old_diagnostics":1,"tail":["..."]}
 {"type":"diagnostic","check":"typecheck","file":"src/a.ts","line":4,"col":26,"rule":"TS2304","message":"Cannot find name 'missing'."}
-{"type":"summary","run":"01K...","failed":["typecheck"],"running":[],"passed":[],"cancelled":[],"next":"firstlight run","eta_ms":0,"new":["typecheck"],"new_failures":1,"old_failures":1,"no_baseline":[]}
+{"type":"summary","run":"01K...","failed":["typecheck"],"running":[],"passed":[],"cancelled":[],"next":"firstlight run --failed","eta_ms":0,"new":["typecheck"],"new_failures":1,"old_failures":1,"no_baseline":[]}
 ```
 
 ## Diagnostics
@@ -315,7 +317,7 @@ The default output is short plain text with no colors. `--json` prints JSON Line
 {"type":"summary","run":"01K...","failed":["lint"],"running":["test"],"passed":["build"],"cancelled":[],"next":"firstlight results --wait","eta_ms":8012}
 ```
 
-`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `cached_from` is the id of the run that ran a reused check, or `null`. That run may be pruned since. For a reused check, `exit_code` and `elapsed_ms` come from that run, and its log holds one line that names it. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
+`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`: `firstlight results --wait` while a check is still running, and `firstlight run --failed` once every check is done and one did not pass. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `cached_from` is the id of the run that ran a reused check, or `null`. That run may be pruned since. For a reused check, `exit_code` and `elapsed_ms` come from that run, and its log holds one line that names it. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
 
 ## Exit codes
 

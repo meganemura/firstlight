@@ -73,13 +73,13 @@ test("follow prints each status change as it happens, then the summary, and exit
       "\\nlate_fail failed \\(exit 2, \\d+\\.\\ds\\)\\n" +
         `  log: ${escapeRegExp(path.join(dir, "late_fail.log"))}\\n` +
         "    src/a\\.ts:1:1 late boom\\n" +
-        `run ${id}: 2 failed, 1 passed\\nnext: firstlight run\\n$`,
+        `run ${id}: 2 failed, 1 passed\\nnext: firstlight run --failed\\n$`,
     ),
   );
 
   const results = await cli(repo, ["results", "--wait"]);
   assert.equal(results.code, code);
-  assert.ok(results.stdout.endsWith(`run ${id}: 2 failed, 1 passed\nnext: firstlight run\n`));
+  assert.ok(results.stdout.endsWith(`run ${id}: 2 failed, 1 passed\nnext: firstlight run --failed\n`));
 });
 
 test("follow on a finished run replays the whole history, writes no event, and exits 0 when every check passed", async () => {
@@ -150,7 +150,7 @@ test("follow --json streams a late failure with its log tail, and follow with no
     running: [],
     passed: ["late_pass"],
     cancelled: [],
-    next: "firstlight run",
+    next: "firstlight run --failed",
     eta_ms: 0,
   });
 

@@ -53,7 +53,7 @@ test("run returns at the first failure while a slow check keeps running", async 
   const slow = lines.find((line) => line.name === "slow")!;
   assert.equal(slow.exit_code, 0);
   assert.equal(readFileSync(slow.log as string, "utf8"), "slow-done\n");
-  assert.equal(lines.at(-1)!.next, "firstlight run");
+  assert.equal(lines.at(-1)!.next, "firstlight run --failed");
 });
 
 test("run estimates the time left from the last pass of the same check, and only once one exists", async () => {

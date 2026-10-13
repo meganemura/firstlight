@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Once every check of a run is done and one did not pass, the next command that `run`, `results`, `results --new`, and `follow` print is `firstlight run --failed` instead of `firstlight run`, in the text `next:` line and the `next` field of `--json`. While a check is still running, it stays `firstlight results --wait`. The `do` of an error envelope does not change, and neither does the next command after `stop`.
+
 - On a Node older than 24, every command stops before it reads its arguments or starts a run, and prints the error envelope `{"error":"firstlight needs Node 24 or newer (found v20.19.0)","do":"install Node 24 or newer, then rerun the same command"}` with exit code 1. Before, an older Node could run firstlight on a version it was never tested on.
 
 ## 0.2.0 (2026-10-13)

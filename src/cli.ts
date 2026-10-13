@@ -286,7 +286,7 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
     const eta = etaOf(snapshot, typical);
     const first = firstFailure(snapshot.checks);
     if (first !== null) {
-      const next = snapshot.checks.every(isSettled) ? cmd(ctx, "run") : cmd(ctx, "results --wait");
+      const next = snapshot.checks.every(isSettled) ? cmd(ctx, "run --failed") : cmd(ctx, "results --wait");
       out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta, first.name));
       return 1;
     }
@@ -296,7 +296,7 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
         return 0;
       }
       const superseded = ctx.state.currentId() !== run.id;
-      const next = superseded ? cmd(ctx, "results --wait") : cmd(ctx, "run");
+      const next = superseded ? cmd(ctx, "results --wait") : cmd(ctx, "run --failed");
       out(ctx.json ? jsonLines(snapshot, next, eta) : text(snapshot, next, eta));
       return 1;
     }
@@ -337,7 +337,7 @@ async function resultsCommand(ctx: Context, wait: boolean, onlyNew: boolean): Pr
     const failing = [...comparison.checks.values()].some((check) => check.isNew);
     const running = snapshot.checks.some((view) => bucketOf(view.status) === "running");
     const unproven = snapshot.checks.some((view) => isUnproven(view.status));
-    const next = running ? cmd(ctx, "results --new --wait") : failing || unproven ? cmd(ctx, "run") : null;
+    const next = running ? cmd(ctx, "results --new --wait") : failing || unproven ? cmd(ctx, "run --failed") : null;
     out(ctx.json ? newJsonLines(snapshot, comparison, next, eta) : newText(snapshot, comparison, next, eta));
     return failing || unproven ? 1 : 0;
   }
@@ -473,7 +473,7 @@ function etaOf(snapshot: RunSnapshot, typical: ReadonlyMap<string, number>): Run
 function nextFor(ctx: Context, snapshot: RunSnapshot): string | null {
   const buckets = snapshot.checks.map((view) => bucketOf(view.status));
   if (buckets.includes("running")) return cmd(ctx, "results --wait");
-  if (buckets.includes("failed") || buckets.includes("cancelled")) return cmd(ctx, "run");
+  if (buckets.includes("failed") || buckets.includes("cancelled")) return cmd(ctx, "run --failed");
   return null;
 }
 
