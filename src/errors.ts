@@ -26,6 +26,20 @@ export function exitWithEnvelope(err: unknown): never {
   process.exit(1);
 }
 
+// The oldest Node major firstlight is tested on; package.json "engines"
+// says the same. Older Nodes are refused up front, so a missing API never
+// surfaces later as an unrelated stack trace or a hang.
+export const NODE_FLOOR = 24;
+
+export function nodeVersionError(version: string): AgentError | null {
+  const major = Number(/^v?(\d+)\./.exec(version)?.[1]);
+  if (!Number.isInteger(major) || major >= NODE_FLOOR) return null;
+  return new AgentError(
+    `firstlight needs Node ${NODE_FLOOR} or newer (found ${version})`,
+    `install Node ${NODE_FLOOR} or newer, then rerun the same command`,
+  );
+}
+
 export function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }

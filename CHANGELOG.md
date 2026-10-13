@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a Node older than 24, every command stops before it reads its arguments or starts a run, and prints the error envelope `{"error":"firstlight needs Node 24 or newer (found v20.19.0)","do":"install Node 24 or newer, then rerun the same command"}` with exit code 1. Before, an older Node could run firstlight on a version it was never tested on.
+
 ## 0.2.0 (2026-10-13)
 
 `0.1.0` was removed from npm on 2026-10-12, and npm does not let a removed version be published again. `0.2.0` holds everything in `0.1.0` and the changes below.

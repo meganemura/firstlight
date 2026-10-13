@@ -81,7 +81,7 @@ firstlight has no sequential `run-s` mode and none of npm-run-all's other flags.
 
 ## Install
 
-Requires Node.js 24 or newer. Add it to a project as a development dependency:
+Requires Node.js 24 or newer. On an older Node, every command stops before it does anything and prints `{"error":"firstlight needs Node 24 or newer (found v20.19.0)","do":"install Node 24 or newer, then rerun the same command"}` with exit code 1. Add it to a project as a development dependency:
 
 ```sh
 npm i -D firstlight

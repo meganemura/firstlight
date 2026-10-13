@@ -14,7 +14,7 @@ import { compareFailures, isFailure, isUnproven, type Outcome } from "./baseline
 import { cacheKeys } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
 import { configuredChecks, loadConfig, resolveRun, selectFailed, withParsers } from "./config.ts";
-import { AgentError, exitWithEnvelope } from "./errors.ts";
+import { AgentError, exitWithEnvelope, nodeVersionError } from "./errors.ts";
 import { estimate, type RunEta } from "./eta.ts";
 import { shellQuote } from "./names.ts";
 import { signalGroup, signalPid, sleep } from "./processes.ts";
@@ -484,6 +484,9 @@ function cmd(ctx: Context, rest: string): string {
 function out(textValue: string): void {
   writeSync(1, textValue);
 }
+
+const tooOld = nodeVersionError(process.version);
+if (tooOld !== null) exitWithEnvelope(tooOld);
 
 main(process.argv.slice(2)).then(
   (code) => {
