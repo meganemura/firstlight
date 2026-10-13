@@ -357,6 +357,20 @@ The limits:
 
 In these cases, run `firstlight run --no-cache`. It runs every selected check, and still records the keys, so a later run can reuse its passes.
 
+## CPU contention
+
+firstlight starts every check at once and has no concurrency limit. Test runners such as vitest and `node --test` already spread one check over every core, so checks that run together share the CPU: each one takes longer than it does alone, and the whole run takes at least the checks' total CPU time divided by the number of cores. Measured on a 4-CPU machine, with Node 24.21.0, three runs each, times in seconds:
+
+| Repository | Checks | Each alone (sum) | Together | Slowest check alone, together |
+| --- | --- | --- | --- | --- |
+| firstlight | typecheck, test, archstrict | 35.1 | 34.7 | test 30.9, 34.2 |
+| finderscope | typecheck, test, archstrict | 62.8 | 59.4 | test 58.4, 58.9 |
+| polylinedb | typecheck, test, check:architecture | 197.8 | 178.9 | test 132.0, 178.4 |
+
+In polylinedb, test used about 2.9 cores and check:architecture about 3.8 while each ran alone, so together they need about 160 seconds of the 4 cores at best; 179 is close to that, and 20 seconds less than one after the other. A limit on how many checks run at once would not make the run shorter, because the total CPU time is the same; it would only move time from one check to another. The failure that arrives first still arrives first: typecheck finished in 3 to 6 seconds in every run, against about 2 alone. (finderscope's test had the same two failures on that machine in every run, alone and together.)
+
+To see one heavy check's result sooner at the cost of a longer run, start another heavy check after it with `after`. In polylinedb, putting check:architecture after test would let test report at about 132 seconds instead of 178, and the run would end at about 196 instead of 179.
+
 ## Statuses and output
 
 A check is `pending`, `running`, `passed`, `failed`, `timed_out`, `cancelled`, or `skipped`. A check is `unknown`, with `orphan: true`, when its supervisor process is gone before the check finished. firstlight does not invent an exit code for it. A check killed by a signal has the exit code 128 plus the signal number.
