@@ -52,5 +52,9 @@
     "stryker-agent-reporter": "0.1.0",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
+  },
+  "overrides": {
+    "zod": "4.6.5",
+    "ip-address": "10.7.3"
   }
 }
