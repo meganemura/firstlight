@@ -16,14 +16,14 @@ npm lets a trusted publisher be added only to a package that already exists, so 
 
 What happened on 2026-10-12:
 
-1. The owner published a placeholder `0.0.1`, and a `0.0.0-stage`, from a local `npm login` session, added the GitHub Actions trusted publisher on npmjs.com with the values under "Trusted publisher" below, and created the GitHub Environment `publish` with required reviewers.
+1. The owner published a placeholder `0.0.1` from a local `npm login` session (the registry added a `0.0.0-stage` placeholder of its own when the package was created), added the GitHub Actions trusted publisher on npmjs.com with the values under "Trusted publisher" below, and created the GitHub Environment `publish` with required reviewers.
 2. `0.1.0` was published through `publish.yml` with OIDC and provenance.
-3. About seven minutes later, `npm unpublish firstlight@0.0.1` and then `npm unpublish firstlight@0.0.0-stage` removed the whole package, `0.1.0` included. npm blocks a removed name for 24 hours, and the numbers `0.0.0-stage`, `0.0.1`, and `0.1.0` can never be published again. Do not unpublish a version of this package: deprecate it with `npm deprecate` instead.
+3. About seven minutes later, `npm unpublish firstlight@0.0.1` removed the whole package, `0.1.0` included. The machine ran npm behind a proxy that hides versions younger than 48 hours from package metadata, so npm saw no versions and took its whole-package branch. npm blocks a removed name for 24 hours, and the numbers `0.0.0-stage`, `0.0.1`, and `0.1.0` can never be published again. Do not unpublish a version of this package. To retire one, use `npm deprecate`, and only with such a proxy turned off, because `npm deprecate` writes back the metadata it read.
 
 The bootstrap again, for `0.2.0`, after the block ends on 2026-10-13 at 10:21 UTC:
 
 1. On a clean checkout of the `release: 0.2.0` commit: `npm ci`, `npm run build`, `npm test`, `npm run typecheck`, `npm run archstrict`, then `npm pack --dry-run`, and check that the list holds `dist/cli.js`. Without `npm ci`, `prepack` cannot build, and the tarball has no `dist/`.
-2. `npm publish --access public` from a local `npm login` session. This version has no provenance.
+2. Done on 2026-10-13: `npm publish --access public` from a local `npm login` session, from commit 84c7576. This version has no provenance. The registry added a `0.0.0-stage` placeholder again when it created the package; leave it, because behind such a proxy, unpublishing it would delete the whole package again.
 3. In the package settings on npmjs.com, check the trusted publisher against "Trusted publisher" below, and add it again if the removal deleted it.
 4. Push the tag `v0.2.0`. `publish.yml` starts and waits on the Environment `publish`: reject it, because `0.2.0` is already on npm. Create the GitHub release by hand with the commands at the end of "Each version".
 5. Require two-factor authentication and disallow token publishing in the package settings, then update this section with the date. `0.2.1` or `0.3.0` is the first publish through OIDC again.
