@@ -6,14 +6,24 @@
 // It never appends to events.jsonl; it only reads what the supervisor wrote.
 
 import { spawn } from "node:child_process";
-import { closeSync, openSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { compareFailures, isFailure, isUnproven, type Outcome } from "./baseline.ts";
 import { cacheKeys } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
-import { configuredChecks, loadConfig, resolveRun, selectFailed, withParsers } from "./config.ts";
+import {
+  CONFIG_FILE,
+  configText,
+  configuredChecks,
+  loadConfig,
+  proposeChecks,
+  resolveRun,
+  selectFailed,
+  suggestTimeoutSec,
+  withParsers,
+} from "./config.ts";
 import { AgentError, exitWithEnvelope, nodeVersionError } from "./errors.ts";
 import { estimate, type RunEta } from "./eta.ts";
 import { shellQuote } from "./names.ts";
@@ -46,6 +56,7 @@ Usage:
   firstlight results [--wait] [--new] [--cwd DIR] [--json]
   firstlight follow [--cwd DIR] [--json]
   firstlight stop [--cwd DIR] [--json]
+  firstlight init [script|pattern...] [--write [--force]] [--cwd DIR] [--json]
   firstlight --help
 
 run      Stop the previous run if it is still going, start the checks in
@@ -74,6 +85,15 @@ follow   Print one line for each status change of the latest run, from its
          exit as results --wait would. Each line is flushed on its own, so
          a log watcher sees it at once.
 stop     Cancel the checks still running. Does nothing when none are.
+init     Propose a firstlight.json from the package.json scripts and print
+         it. --write writes it; --force lets --write replace an existing
+         one. With no names, it holds the scripts lint, typecheck, test,
+         and archstrict; names and patterns pick other scripts:
+           firstlight init typecheck test check:architecture
+         Each check runs "npm run <script>", gets the parser inferred from
+         the script, and gets a timeoutSec when an earlier run passed it in
+         more than a third of the 600s default. It names the scripts that
+         look like checks and were left out.
 
 Arguments of run:
   word       a check in firstlight.json (with its "after" checks), else a
@@ -160,6 +180,8 @@ async function main(argv: string[]): Promise<number> {
         failed: { type: "boolean", default: false },
         new: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
+        write: { type: "boolean", default: false },
+        force: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -183,10 +205,13 @@ async function main(argv: string[]): Promise<number> {
   if (command === undefined) {
     throw new AgentError("missing command", "run `firstlight run`, or `firstlight --help` for the usage");
   }
-  if (!["run", "results", "follow", "stop"].includes(command)) {
+  if (!["run", "results", "follow", "stop", "init"].includes(command)) {
     throw new AgentError(`unknown command: ${command}`, "run `firstlight --help` for the usage");
   }
-  if (command !== "run" && (names.length > 0 || commands.length > 0)) {
+  if (command === "init" && commands.length > 0) {
+    throw new AgentError("init picks package.json scripts and takes no commands after --", `add the commands to ${CONFIG_FILE} by hand`);
+  }
+  if (command !== "run" && command !== "init" && (names.length > 0 || commands.length > 0)) {
     throw new AgentError(`${command} takes no check names`, `run \`firstlight ${command}\` without arguments`);
   }
   if (values.wait && command !== "results") {
@@ -197,6 +222,12 @@ async function main(argv: string[]): Promise<number> {
   }
   if (values["no-cache"] && command !== "run") {
     throw new AgentError("--no-cache belongs to run", "run `firstlight run --no-cache`");
+  }
+  if (values.write && command !== "init") {
+    throw new AgentError("--write belongs to init", "run `firstlight init --write`");
+  }
+  if (values.force && !values.write) {
+    throw new AgentError("--force only lets init --write replace a firstlight.json", "run `firstlight init --write --force`");
   }
   if (values.failed && command !== "run") {
     throw new AgentError("--failed belongs to run", "run `firstlight run --failed`");
@@ -221,6 +252,8 @@ async function main(argv: string[]): Promise<number> {
       return resultsCommand(ctx, values.wait, values.new);
     case "follow":
       return followCommand(ctx);
+    case "init":
+      return initCommand(ctx, names, values.write, values.force);
     default:
       return stopCommand(ctx);
   }
@@ -424,6 +457,40 @@ async function followCommand(ctx: Context): Promise<number> {
     }
     await sleep(POLL_MS);
   }
+}
+
+function initCommand(ctx: Context, names: string[], write: boolean, force: boolean): number {
+  const { checks, leftOut } = proposeChecks(ctx.state.root, names);
+  const durations = ctx.state.passDurations(checks);
+  const proposed = checks.map((check) => {
+    const ms = durations.get(check.name);
+    const timeoutSec = ms === undefined ? null : suggestTimeoutSec(ms);
+    return timeoutSec === null ? check : { ...check, timeoutSec };
+  });
+  const file = path.join(ctx.state.root, CONFIG_FILE);
+  const exists = existsSync(file);
+  const content = configText(proposed);
+  if (write) {
+    if (exists && !force) {
+      throw new AgentError(`${file} already exists, and init does not replace it`, cmd(ctx, `init${argsOf(names)} --write --force`));
+    }
+    writeFileSync(file, content);
+  }
+  const next = write ? cmd(ctx, "run") : cmd(ctx, `init${argsOf(names)} --write${exists ? " --force" : ""}`);
+  const widen = leftOut.length === 0 ? null : cmd(ctx, `init${argsOf([...checks.map((check) => check.name), ...leftOut])}`);
+  if (ctx.json) {
+    out(`${JSON.stringify({ type: "init", file, written: write, existed: exists, config: JSON.parse(content), left_out: leftOut, next })}\n`);
+    return 0;
+  }
+  const lines = [write ? `wrote ${file}:` : `would write ${file}${exists ? " (it exists; --force replaces it)" : ""}:`, content.trimEnd()];
+  if (widen !== null) lines.push(`left out: ${leftOut.join(", ")} (to add them: ${widen})`);
+  lines.push(`next: ${next}`);
+  out(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+function argsOf(names: readonly string[]): string {
+  return names.map((name) => ` ${shellQuote(name)}`).join("");
 }
 
 async function stopCommand(ctx: Context): Promise<number> {

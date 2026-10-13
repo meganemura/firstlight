@@ -96,6 +96,15 @@ Or run it once without adding it:
 npx firstlight run
 ```
 
+Without `firstlight.json`, `firstlight run` runs the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict`. To choose the checks, let `firstlight init` propose a `firstlight.json`, read it, then write it:
+
+```sh
+npx firstlight init typecheck test check:architecture
+npx firstlight init typecheck test check:architecture --write
+```
+
+See [Starting a config](#starting-a-config).
+
 The package holds JavaScript compiled from `src/` and has no runtime dependencies. From a checkout, Node strips the TypeScript types and runs the source directly, with no build:
 
 ```sh
@@ -123,7 +132,7 @@ node src/cli.ts --help
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
 | `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
 
-A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
+A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._:-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
 Without `firstlight.json`, each of the `package.json` scripts `lint`, `typecheck`, `test`, and `archstrict` that exists becomes a check that runs `npm run <name>`, with no `after`.
 
@@ -131,10 +140,43 @@ Other scripts whose name starts with one of those words or with `check` (`check:
 
 ```text
 passed 2 checks in 79.5s (run 01K...)
-not run: check:architecture, test:mutation (without firstlight.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or list it in firstlight.json)
+not run: check:architecture, test:mutation (without firstlight.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or write firstlight.json with firstlight init)
 ```
 
 With `--json`, the summary gains `"not_run": ["check:architecture", "test:mutation"]`. When none of the four scripts exists, the error envelope names those scripts and suggests running them.
+
+### Starting a config
+
+`firstlight init` proposes a `firstlight.json` from the `package.json` scripts and prints it. It writes nothing until `--write` is given, and `--write` does not replace an existing `firstlight.json` without `--force`.
+
+```text
+$ firstlight init typecheck test check:architecture
+would write /repo/firstlight.json:
+{
+  "checks": {
+    "typecheck": {
+      "run": "npm run typecheck",
+      "parser": "tsc"
+    },
+    "test": {
+      "run": "npm run test",
+      "parser": "vitest"
+    },
+    "check:architecture": {
+      "run": "npm run check:architecture"
+    }
+  }
+}
+left out: test:mutation (to add them: firstlight init typecheck test check:architecture test:mutation)
+next: firstlight init typecheck test check:architecture --write
+```
+
+- With no names, the proposal holds the scripts `lint`, `typecheck`, `test`, and `archstrict` that exist. Names and patterns (`"check:*"`, as in `run`) pick any scripts instead. A shell command is not a script, so add it to `firstlight.json` by hand.
+- Each check is named after its script and runs `npm run <script>`, the same command `firstlight run <script>` runs, so the runs before `init` still count for reused passes and time estimates.
+- `parser` is written when firstlight can infer it from the script (see [Diagnostics](#diagnostics)). A script that chains commands with `&&` gets none; add one by hand if you know it.
+- `timeoutSec` is written when a kept run passed the same check in more than a third of the default 600 seconds: three times that duration, rounded up to whole minutes.
+- `left out:` names the scripts that look like checks (they start with `lint`, `typecheck`, `test`, `check`, or `archstrict`) and that the proposal does not hold, with the command that adds them.
+- `--json` prints one object: `{"type":"init","file","written","existed","config","left_out","next"}`.
 
 The repository root is `git rev-parse --show-toplevel` from the current directory, or the current directory when that fails. `--cwd DIR` starts from `DIR` instead.
 
@@ -146,6 +188,7 @@ firstlight run --failed [--no-cache] [--cwd DIR] [--json]
 firstlight results [--wait] [--new] [--cwd DIR] [--json]
 firstlight follow [--cwd DIR] [--json]
 firstlight stop [--cwd DIR] [--json]
+firstlight init [script|pattern...] [--write [--force]] [--cwd DIR] [--json]
 firstlight --help
 ```
 
@@ -154,6 +197,7 @@ firstlight --help
 - `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the diagnostics, the log path, and the last 40 log lines (10 when there are diagnostics). `--wait` blocks until every check is done. `--new` reports only the failures the previous run did not have; see [Only new failures](#only-new-failures).
 - `follow` prints the status changes of the latest run as they happen; see [Following a run](#following-a-run).
 - `stop` cancels the checks that are still running. With nothing running, it does nothing and exits 0.
+- `init` proposes a `firstlight.json` from the `package.json` scripts, and writes it with `--write`; see [Starting a config](#starting-a-config).
 
 A `running` or `pending` check shows about how long it has left, and the `next: firstlight results --wait` line shows the time left for the whole run, so the agent knows when to pull the rest:
 

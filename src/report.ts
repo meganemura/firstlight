@@ -292,7 +292,7 @@ function plural(count: number, word: string): string {
 // package.json fallback did not run.
 export function notRunText(notRun: string[]): string {
   if (notRun.length === 0) return "";
-  return `not run: ${notRun.join(", ")} (without firstlight.json, only ${FALLBACK_SCRIPTS.join(", ")} run; name a script, like firstlight run ${notRun[0]}, or list it in firstlight.json)\n`;
+  return `not run: ${notRun.join(", ")} (without firstlight.json, only ${FALLBACK_SCRIPTS.join(", ")} run; name a script, like firstlight run ${notRun[0]}, or write firstlight.json with firstlight init)\n`;
 }
 
 export function allPassedText(snapshot: RunSnapshot, notRun: string[] = []): string {

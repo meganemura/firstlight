@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { test } from "vitest";
-import { checkLikeScripts, FALLBACK_SCRIPTS, parseConfig } from "../src/config.ts";
+import { checkLikeScripts, configText as initConfigText, DEFAULT_TIMEOUT_SEC, FALLBACK_SCRIPTS, parseConfig, suggestTimeoutSec } from "../src/config.ts";
 import { AgentError } from "../src/errors.ts";
 
 type Graph = Map<string, Set<string>>;
@@ -102,6 +102,32 @@ test("the check-like scripts keep package.json order and leave out the fallback 
       const fallback = (FALLBACK_SCRIPTS as readonly string[]).includes(name);
       const checkLike = ["lint", "typecheck", "test", "check", "archstrict"].includes(head);
       assert.equal(picked.includes(name), checkLike && !fallback, name);
+    }
+  });
+});
+
+test("the firstlight.json init writes reads back as the same checks", () => {
+  hegel.test((tc) => {
+    const count = tc.draw(gs.integers({ minValue: 1, maxValue: 5 }));
+    const checks = Array.from({ length: count }, (_, i) => {
+      const name = tc.draw(gs.sampledFrom(["lint", "test", "check:arch", "a.b", "x-y"])) + i;
+      const timeoutSec = tc.draw(gs.sampledFrom([DEFAULT_TIMEOUT_SEC, 60, 900]));
+      const parser = tc.draw(gs.sampledFrom([undefined, "tsc", "vitest", "node-test", "archstrict"]));
+      const check = { name, run: `npm run ${name}`, after: [] as string[], timeoutSec };
+      return parser === undefined ? check : { ...check, parser };
+    });
+    assert.deepEqual(parseConfig(initConfigText(checks), "firstlight.json"), checks);
+  });
+});
+
+test("a suggested timeout is in whole minutes, past the default, and at least three times the pass", () => {
+  hegel.test((tc) => {
+    const ms = tc.draw(gs.integers({ minValue: 0, maxValue: 3_600_000 }));
+    const seconds = suggestTimeoutSec(ms);
+    if (ms * 3 <= DEFAULT_TIMEOUT_SEC * 1000) {
+      assert.equal(seconds, null);
+    } else {
+      assert.ok(seconds !== null && seconds % 60 === 0 && seconds > DEFAULT_TIMEOUT_SEC && seconds * 1000 >= ms * 3, String(seconds));
     }
   });
 });

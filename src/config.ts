@@ -24,8 +24,9 @@ const CHECK_LIKE = new Set(["lint", "typecheck", "test", "check", "archstrict"])
 
 // A configured name is one plain word, never whitespace or "*", so an
 // argument of `firstlight run` that names it cannot also read as a shell
-// command or a script glob.
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// command or a script glob. ":" is allowed so a check can keep the name of
+// the script it runs, like check:architecture.
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser"]);
 
 export interface Config {
@@ -51,7 +52,7 @@ export function loadConfig(root: string): Config {
     `no checks found in ${root}: there is no ${CONFIG_FILE} and package.json has no ${FALLBACK_SCRIPTS.join(", ")} script${named}`,
     notRun.length === 0
       ? `create ${configPath} like {"checks": {"test": {"run": "npm test"}}}, then run \`firstlight run\``
-      : `run \`firstlight run ${notRun.map(shellQuote).join(" ")}\`, or list them in ${configPath}`,
+      : `run \`firstlight run ${notRun.map(shellQuote).join(" ")}\`, or write ${configPath} with \`firstlight init ${notRun.map(shellQuote).join(" ")} --write\``,
   );
 }
 
@@ -291,6 +292,87 @@ export function selectFailed(configured: CheckSpec[], previous: readonly Previou
 
 // The checks of firstlight.json alone, without the package.json fallback:
 // what a word given to `run` can name as a configured check.
+export interface Proposal {
+  checks: CheckSpec[];
+  // Check-like scripts the proposal does not hold, in package.json order.
+  leftOut: string[];
+}
+
+// What `firstlight init` would write: each picked script as the check
+// `run` would make of it, so a later run shares its cache keys and
+// durations with the runs before init, plus the parser inferred from the
+// script. With no names, the picked scripts are the package.json fallback.
+export function proposeChecks(root: string, args: readonly string[]): Proposal {
+  const file = path.join(root, "package.json");
+  const commands = readScriptCommands(file);
+  if (commands === null) {
+    throw new AgentError(
+      `there is no package.json in ${root}, and firstlight init proposes checks from its scripts`,
+      `write ${path.join(root, CONFIG_FILE)} by hand, like {"checks": {"test": {"run": "make test"}}}`,
+    );
+  }
+  const scripts = Object.keys(commands);
+  const checkLike = checkLikeScripts(scripts);
+  let picked: string[];
+  if (args.length === 0) {
+    picked = FALLBACK_SCRIPTS.filter((name) => scripts.includes(name));
+    if (picked.length === 0) {
+      throw new AgentError(
+        `package.json has no ${FALLBACK_SCRIPTS.join(", ")} script, so firstlight init has nothing to propose`,
+        checkLike.length === 0
+          ? `name the scripts to check, like \`firstlight init ${scripts[0] ?? "test"}\``
+          : `name the scripts to check, like \`firstlight init ${checkLike.map(shellQuote).join(" ")}\``,
+      );
+    }
+  } else {
+    picked = [];
+    for (const arg of args) {
+      if (/\s/u.test(arg)) {
+        throw new AgentError(
+          `firstlight init picks package.json scripts, and "${arg}" is a shell command`,
+          `add it to ${CONFIG_FILE} by hand, like {"checks": {"name": {"run": ${JSON.stringify(arg)}}}}`,
+        );
+      }
+      const matched = isPattern(arg) ? expandPattern(arg, scripts) : scripts.includes(arg) ? [arg] : [];
+      if (matched.length === 0) {
+        throw new AgentError(
+          `no package.json script ${isPattern(arg) ? "matches" : "is named"} "${arg}"; the scripts are: ${scripts.join(", ") || "(none)"}`,
+          `pick from: ${scripts.join(", ") || "(none)"}`,
+        );
+      }
+      for (const name of matched) if (!picked.includes(name)) picked.push(name);
+    }
+  }
+  const scriptOf = (name: string): string | null => commands[name] ?? null;
+  const checks = picked.map((name): CheckSpec => {
+    const check = scriptCheck(name);
+    const parser = inferParser(check.run, scriptOf);
+    return parser === null ? check : { ...check, parser };
+  });
+  return { checks, leftOut: checkLike.filter((name) => !picked.includes(name)) };
+}
+
+// A timeout that leaves room for a check that once passed in `ms`: three
+// times that, in whole minutes, or null when the default already does.
+export function suggestTimeoutSec(ms: number): number | null {
+  const seconds = Math.ceil((ms * 3) / 60_000) * 60;
+  return seconds > DEFAULT_TIMEOUT_SEC ? seconds : null;
+}
+
+// The firstlight.json text for `checks`, with only the keys that differ
+// from the defaults, so the file reads like one written by hand.
+export function configText(checks: readonly CheckSpec[]): string {
+  const body: Record<string, Record<string, unknown>> = {};
+  for (const check of checks) {
+    const entry: Record<string, unknown> = { run: check.run };
+    if (check.after.length > 0) entry.after = check.after;
+    if (check.timeoutSec !== DEFAULT_TIMEOUT_SEC) entry.timeoutSec = check.timeoutSec;
+    if (check.parser !== undefined && check.parser !== null) entry.parser = check.parser;
+    body[check.name] = entry;
+  }
+  return `${JSON.stringify({ checks: body }, null, 2)}\n`;
+}
+
 export function configuredChecks(root: string): CheckSpec[] {
   const configPath = path.join(root, CONFIG_FILE);
   const configText = readOptional(configPath);

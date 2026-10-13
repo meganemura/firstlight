@@ -87,7 +87,7 @@ test("without firstlight.json the check-like scripts it did not run are named, i
   assert.equal(run.code, 0, run.stderr);
   assert.match(
     run.stdout,
-    /^passed 1 check in [\d.]+s \(run \w+\)\nnot run: check:architecture, test:mutation, check \(without firstlight\.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or list it in firstlight\.json\)\n$/,
+    /^passed 1 check in [\d.]+s \(run \w+\)\nnot run: check:architecture, test:mutation, check \(without firstlight\.json, only lint, typecheck, test, archstrict run; name a script, like firstlight run check:architecture, or write firstlight\.json with firstlight init\)\n$/,
   );
 
   const json = await cli(repo, ["run", "--json"]);
@@ -102,7 +102,7 @@ test("with only check-like scripts outside the fallback, the envelope names them
   assert.equal(result.code, 1);
   assert.deepEqual(body, {
     error: `no checks found in ${root}: there is no firstlight.json and package.json has no lint, typecheck, test, archstrict script (scripts that look like checks: check:sql, lint:js)`,
-    do: `run \`firstlight run check:sql lint:js\`, or list them in ${root}/firstlight.json`,
+    do: `run \`firstlight run check:sql lint:js\`, or write ${root}/firstlight.json with \`firstlight init check:sql lint:js --write\``,
   });
 });
 

@@ -206,6 +206,13 @@ export class RepoState {
     return typicalDurations(run.checks, past);
   }
 
+  // The newest pass of each check in any kept run, for checks that no run
+  // holds yet, as `firstlight init` proposes them.
+  passDurations(specs: CheckSpec[]): Map<string, number> {
+    const past: PastRun[] = this.pastRuns().map((files) => ({ checks: files.record.checks, states: files.states }));
+    return typicalDurations(specs, past);
+  }
+
   // The run each check of `run` is compared with, keyed by check name, with
   // that run's record, whose parser and log the comparison reads.
   baselines(run: RunRecord): Map<string, Baseline & { record: RunRecord }> {
