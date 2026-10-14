@@ -3,6 +3,7 @@
     "typecheck": { "run": "npm run typecheck" },
     "test": { "run": "npm test" },
     "archstrict": { "run": "npm run archstrict" },
+    "scenarios": { "run": "npm run test:scenarios" },
     "mutation": { "run": "npm run mutation -- --mutate src/checks.ts,src/config.ts", "timeoutSec": 300 }
   }
 }

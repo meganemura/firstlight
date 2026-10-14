@@ -37,6 +37,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "test": "vitest run",
+    "test:scenarios": "nuka check && nuka run features",
     "typecheck": "tsc --noEmit",
     "archstrict": "archstrict check",
     "mutation": "stryker run",
@@ -49,6 +50,7 @@
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.5.1",
     "archstrict": "0.1.0",
+    "nukadoko": "0.14.0",
     "stryker-agent-reporter": "0.1.0",
     "typescript": "6.0.3",
     "vitest": "4.1.11"

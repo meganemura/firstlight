@@ -5,3 +5,7 @@ reports/
 .stryker-tmp/
 tmp/
 dist/
+.nukadoko/
+.env
+.env.*
+!.env.example

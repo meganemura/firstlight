@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, queue]
   pull_request:
 
 permissions:
@@ -22,3 +22,4 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run archstrict
+      - run: npm run test:scenarios

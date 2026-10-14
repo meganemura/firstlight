@@ -32,11 +32,12 @@ The user-facing description is in `README.md`.
 - `tsconfig.build.json`: the build. It compiles `src/` to `dist/` (gitignored) and rewrites `.ts` relative imports to `.js`. The supervisor is `dist/cli.js` started again, so the published package spawns plain JavaScript.
 - `.github/workflows/publish.yml` and `docs/releasing.md`: the npm release through a trusted publisher on a `v*` tag, and the one-time bootstrap that is still to do.
 - `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`.
-- `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
+- `features/` and `nukadoko.config.ts`: the agent flow as a nukadoko scenario (run, a fast failure back while a slow check runs, `results --wait`, `run --failed`), with typed steps that run `src/cli.ts` in a scratch repository with its own `XDG_STATE_HOME`. The `scratch` fixture removes those directories after the scenario.
+- `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, `scenarios`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
 
 ## Rules
 
-- Runtime code uses Node built-ins only (no runtime dependencies). Development uses the owner's toolchain: vitest, Hegel (`@hegeldev/hegel`), archstrict, Stryker with stryker-agent-reporter, and depug (`@meganemura/depug`). Ask the owner before you add any other dependency. Pin exact versions, at least 7 days past release, with no later security fix superseding them.
+- Runtime code uses Node built-ins only (no runtime dependencies). Development uses the owner's toolchain: vitest, Hegel (`@hegeldev/hegel`), archstrict, Stryker with stryker-agent-reporter, depug (`@meganemura/depug`), and nukadoko (scenarios). Ask the owner before you add any other dependency. Pin exact versions, at least 7 days past release, with no later security fix superseding them.
 - Write tests with Hegel wherever a property exists: invariants, round trips, ordering. Example tests cover exact CLI output and JSON shape.
 - `src/` runs directly through Node's type stripping: use erasable TypeScript syntax only (no enum, no namespace, no parameter properties), and write `.ts` extensions in relative imports.
 - Node does not strip types from files under `node_modules`, so the package ships `dist/`, compiled by `npm run build`. Do not point `bin` or a test of the installed package at `src/`.
@@ -51,6 +52,7 @@ The user-facing description is in `README.md`.
 - `npm test` runs the vitest suite. A failed test prints a `depug evidence:` file and a `depug rerun:` command; run that command, or put a depug verb in front of it, instead of guessing a runtime value from the source.
 - `npm run typecheck` runs `tsc --noEmit` over `src/`, `test/`, and the root `*.ts` files. tsc only checks; Node runs the sources directly.
 - `npm run archstrict` runs `archstrict check`.
+- `npm run test:scenarios` runs `nuka check` and `nuka run features`, the nukadoko scenario of the agent flow.
 - `npm run mutation` runs Stryker over `src/` except `cli.ts` and `supervisor.ts`. `npm run mutation -- --mutate src/checks.ts` narrows it to one file.
 - `npm run build` compiles `src/` to `dist/` with `tsconfig.build.json`, after it removes the old `dist/`. Only the pack test needs it, and `npm pack` runs it through `prepack`.
 - `npm pack --dry-run` prints the tarball's file list: `dist/`, `README.md`, `CHANGELOG.md`, `LICENSE`, and `package.json`.

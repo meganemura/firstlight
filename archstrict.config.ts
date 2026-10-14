@@ -13,7 +13,9 @@ export default {
   // - archstrict's own two files, which are never module content;
   // - hidden directories at any depth (.git, tool state), which tsc's own
   //   default include also skips;
-  // - common noise directories that init found on disk (test, tmp).
+  // - common noise directories that init found on disk (test, tmp), and
+  //   the nukadoko scenarios (features, nukadoko.config.ts), which test
+  //   the CLI like test/ does.
   //   Remove one of these entries if that directory holds module content.
   exclude: [
     "archstrict.config.ts",
@@ -22,6 +24,8 @@ export default {
     "**/.*/**",
     "test/**",
     "tmp/**",
+    "features/**",
+    "nukadoko.config.ts",
   ],
   // The layers, bottom to top. A file may import its own layer or a lower
   // one, never a higher one.
