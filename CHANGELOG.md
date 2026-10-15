@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A check whose command, or whose `npm run` script, joins simple commands with `&&` gets the parser of each command that has one, in order, so `tsc --noEmit && vitest run` shows tsc's or vitest's diagnostics instead of a 40-line log tail. `parser` in `firstlight.json` and the parser recorded in `run.json` can be a list, like `["tsc", "vitest"]`, and `firstlight init` writes one for such a script. A list joined by `||` or `;`, or a pipe, still gets none.
+
 - The README has a CPU contention section: measurements of checks run alone and together in three repositories, why firstlight has no concurrency limit, and how `after` trades a longer run for an earlier result of one heavy check.
 
 - `firstlight init [script|pattern...]` proposes a `firstlight.json` from the `package.json` scripts and prints it; `--write` writes it, and refuses to replace an existing one without `--force`. With no names, it holds the scripts `lint`, `typecheck`, `test`, and `archstrict` that exist; names and patterns pick other scripts. Each check runs `npm run <script>`, gets the parser inferred from the script, and gets a `timeoutSec` of three times its newest pass, in whole minutes, when that is more than the 600-second default. It names the check-like scripts it left out, with the command that adds them. `--json` prints one `{"type":"init",...}` object. A shell command, an unknown script, a missing `package.json`, or a package with none of the four scripts and no names gives the error envelope.

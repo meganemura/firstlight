@@ -399,7 +399,10 @@ function isRunRecord(value: unknown): value is RunRecord {
       typeof check.run === "string" &&
       Array.isArray(check.after) &&
       typeof check.timeoutSec === "number" &&
-      (check.parser === undefined || check.parser === null || typeof check.parser === "string"),
+      (check.parser === undefined ||
+        check.parser === null ||
+        typeof check.parser === "string" ||
+        (Array.isArray(check.parser) && check.parser.every((name) => typeof name === "string"))),
   );
 }
 

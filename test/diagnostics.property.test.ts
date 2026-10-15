@@ -10,7 +10,7 @@ import path from "node:path";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { test } from "vitest";
-import { inferParser, parseDiagnostics, PARSERS, type Diagnostic } from "../src/diagnostics.ts";
+import { inferParser, parseDiagnostics, parserList, PARSERS, type Diagnostic, type ParserName } from "../src/diagnostics.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "diagnostics");
 const FIXTURE_LINES = readdirSync(FIXTURES).flatMap((file) => readFileSync(path.join(FIXTURES, file), "utf8").split("\n"));
@@ -190,12 +190,29 @@ test("npm run reads as the script's own command, and an env prefix changes nothi
   );
 });
 
-test("a compound command has no parser", () => {
+test("an && list reads through each command's parser, in order and once", () => {
+  hegel.test(
+    (tc) => {
+      const commands = tc.draw(gs.arrays(gs.sampledFrom(COMMANDS), { minSize: 1, maxSize: 4 }));
+      const expected: ParserName[] = [];
+      for (const command of commands) {
+        const parser = inferParser(command, () => null);
+        if (parser !== null) for (const name of parserList(parser)) if (!expected.includes(name)) expected.push(name);
+      }
+      const inferred = inferParser(commands.join(" && "), () => null);
+      assert.deepEqual(inferred === null ? [] : parserList(inferred), expected);
+      if (inferred !== null && expected.length === 1) assert.equal(inferred, expected[0]);
+    },
+    { testCases: 200 },
+  );
+});
+
+test("a list with ||, ;, or a pipe has no parser", () => {
   hegel.test(
     (tc) => {
       const first = tc.draw(gs.sampledFrom(COMMANDS));
       const second = tc.draw(gs.sampledFrom(COMMANDS));
-      const joiner = tc.draw(gs.sampledFrom([" && ", " || ", "; ", " | "]));
+      const joiner = tc.draw(gs.sampledFrom([" || ", "; ", " | "]));
       assert.equal(inferParser(`${first}${joiner}${second}`, () => null), null);
     },
     { testCases: 100 },

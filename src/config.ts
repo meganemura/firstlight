@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { CheckSpec, ReportedStatus } from "./checks.ts";
-import { inferParser, PARSER_CHOICES } from "./diagnostics.ts";
+import { inferParser, isParserChoice, PARSER_CHOICES, PARSERS } from "./diagnostics.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { expandPattern, isPattern, shellQuote } from "./names.ts";
 
@@ -111,8 +111,11 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
     timeoutSec = value.timeoutSec;
   }
   if (value.parser === undefined) return { name, run: value.run, after, timeoutSec };
-  if (typeof value.parser !== "string" || !PARSER_CHOICES.includes(value.parser)) {
-    throw invalid(file, `check "${name}" has "parser" ${JSON.stringify(value.parser)}; allowed values are ${PARSER_CHOICES.join(", ")}`);
+  if (!(value.parser === "none" || isParserChoice(value.parser))) {
+    throw invalid(
+      file,
+      `check "${name}" has "parser" ${JSON.stringify(value.parser)}; allowed values are ${PARSER_CHOICES.join(", ")}, or a list of ${PARSERS.join(", ")}`,
+    );
   }
   return { name, run: value.run, after, timeoutSec, parser: value.parser };
 }

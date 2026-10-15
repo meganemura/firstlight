@@ -142,9 +142,17 @@ test("an unknown parser is rejected with the error envelope", async () => {
   });
   assert.equal(result.code, 1);
   assert.deepEqual(body, {
-    error: 'invalid firstlight.json: check "a" has "parser" "jest"; allowed values are tsc, vitest, node-test, archstrict, none',
+    error: 'invalid firstlight.json: check "a" has "parser" "jest"; allowed values are tsc, vitest, node-test, archstrict, none, or a list of tsc, vitest, node-test, archstrict',
     do: `fix ${root}/firstlight.json, then rerun the command`,
   });
+});
+
+test("an empty parser list is rejected", async () => {
+  const { result, body } = await envelope({
+    "firstlight.json": { checks: { a: { run: "true", parser: [] } } },
+  });
+  assert.equal(result.code, 1);
+  assert.match((body as { error: string }).error, /has "parser" \[\]; allowed values are/);
 });
 
 test("a parser in firstlight.json wins over inference, and none turns inference off", () => {
@@ -152,6 +160,7 @@ test("a parser in firstlight.json wins over inference, and none turns inference 
     JSON.stringify({
       checks: {
         named: { run: "make types", parser: "tsc" },
+        listed: { run: "make check", parser: ["tsc", "vitest"] },
         off: { run: "tsc --noEmit", parser: "none" },
         inferred: { run: "npm run unit" },
         plain: { run: "make" },
@@ -165,6 +174,7 @@ test("a parser in firstlight.json wins over inference, and none turns inference 
     withParsers(repo.root, checks).map((check) => [check.name, check.parser]),
     [
       ["named", "tsc"],
+      ["listed", ["tsc", "vitest"]],
       ["off", null],
       ["inferred", "node-test"],
       ["plain", null],

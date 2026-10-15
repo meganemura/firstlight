@@ -130,7 +130,7 @@ node src/cli.ts --help
 | `run` | A command string. firstlight runs it with `/bin/sh -c` in the repository root. stdout and stderr go to one log file. |
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
-| `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
+| `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`, or a list of them, like `["tsc", "vitest"]`, read in order. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
 
 A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._:-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
@@ -173,7 +173,7 @@ next: firstlight init typecheck test check:architecture --write
 
 - With no names, the proposal holds the scripts `lint`, `typecheck`, `test`, and `archstrict` that exist. Names and patterns (`"check:*"`, as in `run`) pick any scripts instead. A shell command is not a script, so add it to `firstlight.json` by hand.
 - Each check is named after its script and runs `npm run <script>`, the same command `firstlight run <script>` runs, so the runs before `init` still count for reused passes and time estimates.
-- `parser` is written when firstlight can infer it from the script (see [Diagnostics](#diagnostics)). A script that chains commands with `&&` gets none; add one by hand if you know it.
+- `parser` is written when firstlight can infer it from the script (see [Diagnostics](#diagnostics)). A script that chains commands with `&&`, like `tsc --noEmit && vitest run`, gets the list of its commands' parsers.
 - `timeoutSec` is written when a kept run passed the same check in more than a third of the default 600 seconds: three times that duration, rounded up to whole minutes.
 - `left out:` names the scripts that look like checks (they start with `lint`, `typecheck`, `test`, `check`, or `archstrict`) and that the proposal does not hold, with the command that adds them.
 - `--json` prints one object: `{"type":"init","file","written","existed","config","left_out","next"}`.
@@ -300,7 +300,7 @@ Each line is `file:line:col rule message`. A part the tool does not report is le
 
 The message is the first line of the error. A line that ends in `:` takes the next line too, so `Expected values to be strictly equal: 7 !== 6` stays whole. Paths inside the repository are relative to its root. Colors and CRLF line endings make no difference.
 
-A check's `parser` in `firstlight.json` chooses the parser. Without one, firstlight infers it from the `run` command when the command is one simple command: `tsc`, `vitest`, `node --test`, or `archstrict`, also through `npx`, `pnpm exec`, a `node_modules/.bin/` path, or a leading `NAME=value`. For `npm run <script>` and `npm test`, it reads the script's own command in `package.json`, one level deep. A command with `&&`, `||`, `;`, or a pipe gets no parser, because it can run more than one tool. firstlight decides the parser when the run starts, so `results` reads the log the same way later. A parser reads text, so a command that prints JSON, such as `archstrict check --json`, gives no diagnostics.
+A check's `parser` in `firstlight.json` chooses the parser. Without one, firstlight infers it from the `run` command when the command is simple commands joined by `&&`: `tsc`, `vitest`, `node --test`, or `archstrict`, also through `npx`, `pnpm exec`, a `node_modules/.bin/` path, or a leading `NAME=value`. For `npm run <script>` and `npm test`, it reads the script's own command in `package.json`, one level deep. An `&&` list, like `tsc --noEmit && vitest run`, gets the parser of each command that has one, in order, and its diagnostics are what each parser finds; a parser skips the lines of other tools. A command with `||`, `;`, or a pipe gets no parser, because which tool's output the log ends with is not fixed. firstlight decides the parser when the run starts, so `results` reads the log the same way later. A parser reads text, so a command that prints JSON, such as `archstrict check --json`, gives no diagnostics.
 
 In `--json`, the diagnostics follow their check's object, one line each:
 

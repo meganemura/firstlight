@@ -9,7 +9,7 @@
 import { countFailures, isUnproven, type CheckComparison } from "./baseline.ts";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { FALLBACK_SCRIPTS } from "./config.ts";
-import { formatDiagnostic, isParserName, parseDiagnostics, type Diagnostic } from "./diagnostics.ts";
+import { formatDiagnostic, isParserChoice, parseDiagnostics, parserList, type Diagnostic } from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
 import { logPaths, readLogEnd, tailLines, type RunRecord, type RunSnapshot } from "./store.ts";
 
@@ -29,8 +29,9 @@ interface LogReport {
 // that run recorded for it.
 export function checkDiagnostics(run: RunRecord, dir: string, name: string): Diagnostic[] {
   const parser = run.checks.find((check) => check.name === name)?.parser;
-  if (!isParserName(parser)) return [];
-  return parseDiagnostics(parser, readLogEnd(logPaths(dir, run.checks).get(name)!), run.root);
+  if (!isParserChoice(parser)) return [];
+  const log = readLogEnd(logPaths(dir, run.checks).get(name)!);
+  return parserList(parser).flatMap((one) => parseDiagnostics(one, log, run.root));
 }
 
 // `shown` narrows the diagnostics printed, as `results --new` does; the

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "vitest";
-import { formatDiagnostic, inferParser, parseDiagnostics, type ParserName } from "../src/diagnostics.ts";
+import { formatDiagnostic, inferParser, parseDiagnostics, type ParserChoice, type ParserName } from "../src/diagnostics.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "diagnostics");
 
@@ -186,7 +186,7 @@ test("the parser is inferred from the command, and from an npm script one level 
     both: "tsc && vitest run",
   };
   const scriptOf = (name: string) => scripts[name] ?? null;
-  const cases: [string, ParserName | null][] = [
+  const cases: [string, ParserChoice | null][] = [
     ["tsc --noEmit", "tsc"],
     ["npx tsc -p .", "tsc"],
     ["./node_modules/.bin/vitest run", "vitest"],
@@ -200,12 +200,17 @@ test("the parser is inferred from the command, and from an npm script one level 
     ["npm test", "vitest"],
     ["npm run unit -- --watch", "node-test"],
     ["npm run again", null],
-    ["npm run both", null],
+    ["npm run both", ["tsc", "vitest"]],
     ["npm run missing", null],
-    ["tsc && vitest run", null],
+    ["tsc && vitest run", ["tsc", "vitest"]],
+    ["npm run typecheck && vitest run", ["tsc", "vitest"]],
+    ["npm run build && vitest run", "vitest"],
+    ["tsc && tsc -p test", "tsc"],
+    ["tsc &&", null],
+    ["tsc && vitest run || true", null],
     ["vitest run | tee out.log", null],
     ["bundle exec rspec", null],
     ["make", null],
   ];
-  for (const [command, parser] of cases) assert.equal(inferParser(command, scriptOf), parser, command);
+  for (const [command, parser] of cases) assert.deepEqual(inferParser(command, scriptOf), parser, command);
 });

@@ -123,7 +123,8 @@ diagnostics, at most 20, as "file:line:col rule message" lines before a
 {"type":"diagnostic",...} lines after the check. The parsers are tsc,
 vitest, node-test (node --test), and archstrict. Each check's parser comes from its "parser" in firstlight.json,
 or from its command: tsc, vitest, node --test, archstrict, or "npm run
-<script>" (and "npm test") whose script runs one of them. "parser":
+<script>" (and "npm test") whose script runs one of them; an && list
+gets each of its commands' parsers, like ["tsc", "vitest"]. "parser":
 "none" turns this off for one check. A vitest diagnostic whose test
 depug's reporter named also gets "evidence: <path>" and "rerun:
 <command>" lines under it, and "evidence" and "rerun" fields in --json.

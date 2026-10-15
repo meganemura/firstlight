@@ -56,13 +56,39 @@ export function formatDiagnostic(diagnostic: Diagnostic): string {
   return [where, diagnostic.rule, diagnostic.message].filter((part) => part !== null && part !== "").join(" ");
 }
 
-// The command is read only when it is one simple command: a pipe, a list,
-// or a substitution could run any tool, and a wrong parser is worse than
-// none. `npm run <script>` and `npm test` look up the script's own command
-// one level deep; that command is not followed further.
-export function inferParser(command: string, scriptOf: (name: string) => string | null): ParserName | null {
-  const words = simpleWords(command);
-  if (words === null) return null;
+// A check reads its log through one parser, or through several in order.
+export type ParserChoice = ParserName | ParserName[];
+
+export function isParserChoice(value: unknown): value is ParserChoice {
+  return isParserName(value) || (Array.isArray(value) && value.length > 0 && value.every(isParserName));
+}
+
+export function parserList(choice: ParserChoice): ParserName[] {
+  return typeof choice === "string" ? [choice] : choice;
+}
+
+// The command is read only when it is simple commands joined by `&&`: a
+// pipe, `;`, `||`, or a substitution could run any tool, and a wrong parser
+// is worse than none. An `&&` list runs its commands in order and each
+// parser skips the lines it does not recognize, so every command's parser
+// reads the one log. `npm run <script>` and `npm test` look up the script's
+// own command one level deep; that command is not followed further.
+export function inferParser(command: string, scriptOf: (name: string) => string | null): ParserChoice | null {
+  const segments = command.split("&&");
+  const found: ParserName[] = [];
+  for (const segment of segments) {
+    if (segment.trim().length === 0) return null;
+    const words = simpleWords(segment);
+    if (words === null) return null;
+    for (const parser of parserList(inferSimple(words, scriptOf) ?? [])) {
+      if (!found.includes(parser)) found.push(parser);
+    }
+  }
+  if (found.length === 0) return null;
+  return found.length === 1 ? found[0]! : found;
+}
+
+function inferSimple(words: string[], scriptOf: (name: string) => string | null): ParserChoice | null {
   let i = 0;
   while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!)) i += 1;
   if (words[i] === "npx") {
