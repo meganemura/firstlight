@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A version bump that lands on `main` now publishes the package: `publish.yml` runs on a push to `main` that changes `package.json`, releases nothing when the `v<version>` tag already exists, and after `npm publish` creates that tag and the GitHub release on the published commit. Nobody pushes a release tag by hand.
+
 - A check whose command, or whose `npm run` script, joins simple commands with `&&` gets the parser of each command that has one, in order, so `tsc --noEmit && vitest run` shows tsc's or vitest's diagnostics instead of a 40-line log tail. `parser` in `firstlight.json` and the parser recorded in `run.json` can be a list, like `["tsc", "vitest"]`, and `firstlight init` writes one for such a script. A list joined by `||` or `;`, or a pipe, still gets none.
 
 - The README has a CPU contention section: measurements of checks run alone and together in three repositories, why firstlight has no concurrency limit, and how `after` trades a longer run for an earlier result of one heavy check.
