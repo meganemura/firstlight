@@ -1,6 +1,6 @@
 {
   "name": "firstlight",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run lint, typecheck, and tests in parallel for a coding agent, and return at the first failure.",
   "keywords": [
     "parallel",

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-16)
 
 - A version bump that lands on `main` now publishes the package: `publish.yml` runs on a push to `main` that changes `package.json`, releases nothing when the `v<version>` tag already exists, and after `npm publish` creates that tag and the GitHub release on the published commit. Nobody pushes a release tag by hand.
 
