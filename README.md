@@ -131,8 +131,9 @@ node src/cli.ts --help
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
 | `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`, or a list of them, like `["tsc", "vitest"]`, read in order. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
-| `affected` | A command that runs only the tests the changed files reach, with `{files}` where the file list goes, like `vitest related --run --passWithNoTests {files}`. See [Narrowing to changed files](#narrowing-to-changed-files). |
-| `fullOn` | Path globs whose change runs the full `run` command anyway, like `["package-lock.json", "vitest.config.ts"]`. `*` stays inside one directory and `**` crosses directories. It needs `affected`. |
+| `select` | A selector: a command that reads the changes since the check's last full pass on stdin and prints the tests they reach. It needs `runSelected`. See [Selecting tests](#selecting-tests). |
+| `runSelected` | The command that runs the selected tests, with `{tests}` where their ids go, like `vitest run {tests}`. It needs `select`. |
+| `fullOn` | Path globs whose change runs the full `run` command without asking the selector, like `["package-lock.json", "vitest.config.ts"]`. `*` stays inside one directory and `**` crosses directories. It needs `select`. |
 
 A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._:-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
@@ -369,41 +370,84 @@ The limits:
 
 In these cases, run `firstlight run --no-cache`. It runs every selected check, and still records the keys, so a later run can reuse its passes.
 
-## Narrowing to changed files
+## Selecting tests
 
-A check with `affected` runs only what the changed files reach, once it has passed in full:
+A check with a selector runs only the tests that the changes reach, once it has passed in full:
 
 ```json
 {
   "checks": {
     "test": {
       "run": "vitest run",
-      "affected": "vitest related --run --passWithNoTests {files}",
-      "fullOn": ["package-lock.json", "vitest.config.ts", "test/helpers.ts"]
+      "select": "my-selector",
+      "runSelected": "vitest run {tests}",
+      "fullOn": ["package-lock.json", "vitest.config.ts"]
     }
   }
 }
 ```
 
-`firstlight run` finds the newest kept run where the check ran its full `run` command and passed, and lists the files that changed between that run's tree and the current tree (`git diff --name-status`, tracked and untracked files). It puts the files, quoted for the shell, in place of `{files}` and runs that command instead:
+firstlight knows no language. It decides when to narrow a check, gives the selector the changes, and runs the tests that the selector returns. A selector is any command that reads one JSON object on stdin and prints one JSON object on stdout. firstlight ships no selector yet. A selector for one language records during the full run which tests reach which files, and selects from that record later.
 
-```text
-test passed (narrowed to 2 files since run 01K..., 3.1s)
+**Recording.** When a check with `select` runs its full `run` command, firstlight creates a directory for it in the run's state and sets `FIRSTLIGHT_RECORD` to that directory's absolute path for the check's process. A recorder in the test run can write its map there. firstlight removes the directory when it prunes the run. A narrowed run does not set `FIRSTLIGHT_RECORD`.
+
+**Selecting.** In a later run, firstlight finds the newest kept run where the check ran its full `run` command and passed. It lists the files that changed between that run's tree and the current tree (`git diff --name-status --no-renames`, tracked and untracked files, with deletions). Then it runs `select` with `/bin/sh -c` in the repository root, without `FIRSTLIGHT_RECORD`, and writes this object to its stdin:
+
+```json
+{
+  "version": 1,
+  "check": "test",
+  "tree": "<the current tree key>",
+  "base": { "run": "01K...", "tree": "<the tree key of that run>", "record": "/.../runs/01K.../record/test" },
+  "changes": [
+    { "status": "M", "path": "src/a.ts" },
+    { "status": "D", "path": "src/old.ts" }
+  ]
+}
 ```
 
-The tool behind `affected` decides which tests a file reaches. firstlight only chooses when to narrow. It runs the full `run` command when:
+`base.record` is `null` when the full run left no record directory. A rename is a deletion and an addition.
 
-- the check never passed in full in a kept run;
-- no file changed since that pass;
-- a file was deleted or renamed, because no tool finds the tests of a path that no longer exists;
-- a changed file matches `fullOn`;
-- more than 200 files changed;
+The selector prints one of these on stdout and exits 0:
+
+```json
+{"tests": [{"id": "src/a.test.ts"}, {"id": "src/b.test.ts", "reason": "imports src/a.ts"}]}
+{"full": "the record is older than the test files"}
+```
+
+Each test needs `id`, a non-empty string. Other fields stay in the run record. An id that is named twice runs once. firstlight puts the ids, each quoted for the shell and separated by spaces, in place of `{tests}` in `runSelected`, in the selector's order, and runs that command:
+
+```text
+test passed (selected 2 tests for 3 changed files since run 01K..., 3.1s)
+```
+
+When the selector selects no test, the check passes without a process. Its log holds one line that says so:
+
+```text
+test passed (selected 0 tests for 3 changed files since run 01K...)
+```
+
+**Full runs.** firstlight runs the full `run` command when:
+
+- the check has not passed its full command in a kept run;
+- no file changed since that run;
 - git could not list the changes;
-- `run --full` was given. `run --no-cache` still narrows; it only stops reuse.
+- a changed file matches `fullOn` (firstlight then does not run the selector);
+- the selector printed `{"full": "<reason>"}`;
+- the selector exited with a code other than 0, did not answer within 60 seconds, or printed anything other than one of the two objects above;
+- `run --full` was given. `run --no-cache` still selects; it only stops reuse.
 
-A narrowed run never becomes the base of a later narrowing, so the changes always count from a full pass, and a file that broke a test once is still in the list until the next full pass. The narrowed command is part of the cache key, so the same narrowing on the same tree is reused like any other result. In `--json`, the check line gets `narrowed`: `{ "base": "<run id>", "files": [...], "command": "..." }`, only when the check was narrowed.
+When a check with a selector had a full pass to count from and still ran in full, its status line says why. The reason for a failed selector includes the first lines of its stderr:
 
-The limit is the tool's map from files to tests. `vitest related` follows the static import graph from each test file. A test that starts the code as a child process, or reads a file at run time, does not import it, so a change to that code reaches no test and the narrowed run passes with none. Use `affected` only where the tests import what they test, put the files that every test depends on in `fullOn`, and run `firstlight run --full` before a merge.
+```text
+test passed (full run: the selector exited 1 (stderr: cannot read the record), 10.2s)
+```
+
+A narrowed run never becomes the base of a later narrowing, so the changes always count from a full pass. Every full run that passes is a new base with a new record, including one that the selector asked for or one after a failed selector. The selected command is part of the cache key, so the same selection on the same tree is reused like any other result. The selector still runs first, because only its answer names that command.
+
+In `--json`, the check line gets `narrowed` when the selector selected the tests: `{"base": "<run id>", "files": [...], "tests": [{"id": "...", ...}], "command": "..."}`, where `command` is `null` when it selected none. It gets `full_run` when the check ran in full after all: `{"base": "<run id>", "reason": "..."}`. `run.json` records both fields under the same names, keyed by check.
+
+The limit is the selector's record. A test that reads a file at run time, or starts the code as a child process, reaches that code only when the recorder sees it. Put the files that every test depends on in `fullOn`, and run `firstlight run --full` before a merge.
 
 ## CPU contention
 
@@ -463,6 +507,8 @@ ${XDG_STATE_HOME:-~/.local/state}/firstlight/<repo-key>/
   runs/<run-id>/events.jsonl  every status change, appended by the supervisor
   runs/<run-id>/<check>.log   stdout and stderr of one check
   runs/<run-id>/supervisor.log  stderr of the supervisor itself
+  runs/<run-id>/record/<check>/  what the check's recorder wrote during a
+                            full run (only for a check with "select")
 ```
 
 The log file name of a check is its name with each character outside `[A-Za-z0-9._-]` replaced by `_`, cut to 100 characters: `lint:js` writes `lint_js.log`, and `bundle exec rspec` writes `bundle_exec_rspec.log`. The name in the output and in `--json` stays as written. When two checks of one run would share a file name, ignoring case, or a check would take `supervisor.log`, one of them gets `-2`, `-3`, and so on; a name that is already a safe file name keeps its own file. The `log` field in `--json` always gives the real path.

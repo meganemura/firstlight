@@ -10,6 +10,7 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -40,6 +41,7 @@ import { AgentError, messageOf } from "./errors.ts";
 import { typicalDurations, type PastRun } from "./eta.ts";
 import { logFileNames } from "./names.ts";
 import { isPidAlive } from "./processes.ts";
+import type { FullRun, Narrowing } from "./selection.ts";
 
 export const KEEP_RUNS = 20;
 const RUN_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -60,15 +62,19 @@ export interface RunRecord {
   // The tree key the run was keyed on; a later run diffs against it to
   // narrow a check. Absent in a run written before narrowing existed.
   tree?: string;
-  // The checks this run narrowed to the files changed since a full pass.
+  // The checks whose selector chose the tests to run, and the checks with a
+  // selector that ran in full although they had a full pass to count from.
   narrowed?: Record<string, Narrowing>;
+  full_run?: Record<string, FullRun>;
 }
 
-export interface Narrowing {
-  // The run whose full pass the files are counted from.
-  base: string;
-  files: string[];
-  command: string;
+// What a check's selector reads about the full pass it counts from.
+export interface NarrowBase {
+  run: string;
+  tree: string;
+  // The directory the check's recorder wrote into, or null when it wrote
+  // nothing.
+  record: string | null;
 }
 
 interface PastRunFiles {
@@ -154,6 +160,7 @@ export class RepoState {
     reused: ReadonlyMap<string, Reuse>,
     tree: string | null = null,
     narrowed: ReadonlyMap<string, Narrowing> = new Map(),
+    fullRun: ReadonlyMap<string, FullRun> = new Map(),
   ): RunRecord {
     const id = newRunId();
     mkdirSync(this.runDir(id), { recursive: true });
@@ -168,6 +175,7 @@ export class RepoState {
     };
     if (tree !== null) run.tree = tree;
     if (narrowed.size > 0) run.narrowed = Object.fromEntries(narrowed);
+    if (fullRun.size > 0) run.full_run = Object.fromEntries(fullRun);
     this.writeRun(run);
     return run;
   }
@@ -219,10 +227,15 @@ export class RepoState {
     }
   }
 
+  // A narrowed run's time is the time of the tests it chose, not of the
+  // full command, so it is left out.
   typicalDurations(run: RunRecord): Map<string, number> {
     const past: PastRun[] = this.pastRuns()
       .filter((files) => files.record.id < run.id)
-      .map((files) => ({ checks: files.record.checks, states: files.states }));
+      .map((files) => ({
+        checks: files.record.checks,
+        states: files.states.filter((state) => files.record.narrowed?.[state.name] === undefined),
+      }));
     return typicalDurations(run.checks, past);
   }
 
@@ -270,17 +283,21 @@ export class RepoState {
     return found;
   }
 
-  // The newest kept run whose own tree this check passed in full, with the
-  // same command: a narrowed pass only proves the files it was given, so
-  // counting from it would let changes slip between two narrowings.
-  narrowBase(check: CheckSpec): { run: string; tree: string } | null {
+  // The newest kept run that ran this check's full command on its own tree
+  // and passed: a narrowed pass only proves the tests it chose, so counting
+  // from it would let changes slip between two narrowings, and a reused
+  // pass ran nothing, so its recorder wrote nothing. The run it reused is
+  // older and on the same tree, and the search reaches it.
+  narrowBase(check: CheckSpec): NarrowBase | null {
     for (const files of this.pastRuns()) {
       const { record, states } = files;
       if (record.tree === undefined || record.narrowed?.[check.name] !== undefined) continue;
       const spec = record.checks.find((candidate) => candidate.name === check.name);
       if (spec?.run !== check.run) continue;
-      if (states.find((state) => state.name === check.name)?.status !== "passed") continue;
-      return { run: record.id, tree: record.tree };
+      const state = states.find((candidate) => candidate.name === check.name);
+      if (state?.status !== "passed" || state.cached_from !== null) continue;
+      const dir = recordPaths(this.runDir(record.id), record.checks).get(check.name)!;
+      return { run: record.id, tree: record.tree, record: existsSync(dir) ? dir : null };
     }
     return null;
   }
@@ -328,6 +345,14 @@ export class RepoState {
 export function logPaths(runDir: string, checks: readonly CheckSpec[]): Map<string, string> {
   const files = logFileNames(checks.map((check) => check.name));
   return new Map([...files].map(([name, file]) => [name, path.join(runDir, file)]));
+}
+
+// The directory a check's recorder writes into during a full run, named
+// like its log so that two checks never share one. Pruning a run removes
+// it with the run.
+export function recordPaths(runDir: string, checks: readonly CheckSpec[]): Map<string, string> {
+  const files = logFileNames(checks.map((check) => check.name));
+  return new Map([...files].map(([name, file]) => [name, path.join(runDir, "record", file.slice(0, -".log".length))]));
 }
 
 export function eventsPath(runDir: string): string {
@@ -444,6 +469,7 @@ function isRunRecord(value: unknown): value is RunRecord {
   if (value.reused !== undefined && !isReuseRecord(value.reused)) return false;
   if (value.tree !== undefined && typeof value.tree !== "string") return false;
   if (value.narrowed !== undefined && !isNarrowedRecord(value.narrowed)) return false;
+  if (value.full_run !== undefined && !isFullRunRecord(value.full_run)) return false;
   return value.checks.every(
     (check) =>
       isRecord(check) &&
@@ -454,7 +480,8 @@ function isRunRecord(value: unknown): value is RunRecord {
       (check.parser === undefined ||
         check.parser === null ||
         typeof check.parser === "string" ||
-        (Array.isArray(check.parser) && check.parser.every((name) => typeof name === "string"))),
+        (Array.isArray(check.parser) && check.parser.every((name) => typeof name === "string"))) &&
+      (check.selector === undefined || isSelector(check.selector)),
   );
 }
 
@@ -465,7 +492,8 @@ function isEvent(value: unknown): value is RunEventLine {
     value.type === "check" &&
     typeof value.check === "string" &&
     CHECK_STATUSES.includes(value.status as never) &&
-    (value.cached_from === undefined || typeof value.cached_from === "string")
+    (value.cached_from === undefined || typeof value.cached_from === "string") &&
+    (value.no_tests === undefined || value.no_tests === true)
   );
 }
 
@@ -495,11 +523,27 @@ function isNarrowedRecord(value: unknown): value is Record<string, Narrowing> {
       (entry) =>
         isRecord(entry) &&
         typeof entry.base === "string" &&
-        typeof entry.command === "string" &&
-        Array.isArray(entry.files) &&
-        entry.files.every((file) => typeof file === "string"),
+        (entry.command === null || typeof entry.command === "string") &&
+        isStringArray(entry.files) &&
+        Array.isArray(entry.tests) &&
+        entry.tests.every((test) => isRecord(test) && typeof test.id === "string"),
     )
   );
+}
+
+function isFullRunRecord(value: unknown): value is Record<string, FullRun> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => isRecord(entry) && typeof entry.base === "string" && typeof entry.reason === "string")
+  );
+}
+
+function isSelector(value: unknown): boolean {
+  return isRecord(value) && typeof value.select === "string" && typeof value.runSelected === "string" && isStringArray(value.fullOn);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

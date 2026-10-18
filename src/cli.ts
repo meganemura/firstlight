@@ -11,7 +11,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { compareFailures, isFailure, isUnproven, type Outcome } from "./baseline.ts";
-import { planNarrowing, parseNameStatus } from "./affected.ts";
 import { cacheKey, cacheKeys, type Reuse } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
 import {
@@ -42,7 +41,21 @@ import {
   text,
   type Comparison,
 } from "./report.ts";
-import { eventsPath, readEvents, RepoState, resolveRoot, type Narrowing, type RunSnapshot } from "./store.ts";
+import {
+  gateChanges,
+  narrowedKeyCommand,
+  narrowTo,
+  parseNameStatus,
+  PROTOCOL_VERSION,
+  readSelector,
+  RECORD_ENV,
+  SELECTOR_TIMEOUT_MS,
+  type FullRun,
+  type Narrowing,
+  type SelectorExit,
+  type SelectorInput,
+} from "./selection.ts";
+import { eventsPath, readEvents, RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
 import { supervise, SUPERVISE_COMMAND } from "./supervisor.ts";
 import { changedPaths, treeKey } from "./tree.ts";
 
@@ -121,13 +134,17 @@ on that tree with that command and never passed there: "test failed
 (cached from run 01K..., 10.4s originally)", with that run's log. Only in
 a git repository.
 
-A check in firstlight.json with "affected", a command holding {files},
-runs only what the changed files reach: once it has passed in full, a
-later run gives it the files changed since that full pass, like
-"vitest related --run src/a.ts src/b.ts". A deleted or renamed file, a
-file matching one of its "fullOn" globs, or more than 200 files runs the
-full command. --full runs the full command anyway. The status line says
-"narrowed to 2 files since run 01K...".
+A check in firstlight.json with "select" and "runSelected" runs only
+the tests its selector picks, once it has passed in full. During a full
+run, FIRSTLIGHT_RECORD names a directory the check may record into. A
+later run gives the selector, on stdin, the files changed since that full
+pass and that directory; the selector prints {"tests":[{"id":"..."}]} or
+{"full":"<reason>"}, and firstlight runs "runSelected" with the quoted
+ids in place of {tests}: "test passed (selected 2 tests for 3 changed
+files since run 01K..., 3.1s)". No test selected passes without running.
+A file matching one of its "fullOn" globs, a selector that fails or
+prints anything else, or --full runs the full command: "test passed
+(full run: <reason>, 10.2s)". firstlight ships no selector.
 
 A failed or timed-out check whose log a parser reads prints its
 diagnostics, at most 20, as "file:line:col rule message" lines before a
@@ -311,8 +328,9 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean,
   const tree = treeKey(ctx.state.root);
   const keys = tree === null ? new Map<string, string>() : cacheKeys(checks, tree);
   const reused = useCache ? ctx.state.reusable(keys) : new Map();
-  const narrowed = tree === null || !narrow ? new Map<string, Narrowing>() : narrowChecks(ctx, checks, tree, keys, reused, useCache);
-  const run = ctx.state.createRun(checks, keys, reused, tree, narrowed);
+  const selected: Selected =
+    tree === null || !narrow ? { narrowed: new Map(), fullRun: new Map() } : await selectTests(ctx, checks, tree, keys, reused, useCache);
+  const run = ctx.state.createRun(checks, keys, reused, tree, selected.narrowed, selected.fullRun);
   const runDir = ctx.state.runDir(run.id);
   // The supervisor has no terminal; its own stderr goes to a file so a
   // crash of firstlight itself is still visible after the fact.
@@ -361,34 +379,84 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean,
   }
 }
 
-// A check with `affected` that has no result to reuse runs only what the
-// files changed since its newest full pass reach. Its key then names the
-// narrowed command, so the narrowed pass is never mistaken for a full one,
-// and running again on the same tree reuses it like any other result.
-function narrowChecks(
+interface Selected {
+  narrowed: Map<string, Narrowing>;
+  fullRun: Map<string, FullRun>;
+}
+
+// A check with a selector and no result to reuse asks its selector which
+// tests the changes since its newest full pass reach. Its key then names
+// the narrowed command, so a narrowed pass is never mistaken for a full
+// one, and running again on the same tree reuses it like any other result.
+// The selectors run here, before the supervisor starts, so the supervisor
+// stays the only writer of events.jsonl and only runs what run.json says.
+async function selectTests(
   ctx: Context,
   checks: readonly CheckSpec[],
   tree: string,
   keys: Map<string, string>,
   reused: Map<string, Reuse>,
   useCache: boolean,
-): Map<string, Narrowing> {
-  const narrowed = new Map<string, Narrowing>();
-  for (const check of checks) {
-    if (check.affected === undefined || reused.has(check.name)) continue;
-    const base = ctx.state.narrowBase(check);
-    if (base === null) continue;
-    const output = changedPaths(ctx.state.root, base.tree, tree);
-    const plan = planNarrowing(check.affected, check.fullOn ?? [], output === null ? null : parseNameStatus(output));
-    if ("full" in plan) continue;
-    const key = cacheKey(tree, plan.command, check.after.map((dep) => keys.get(dep)!));
-    keys.set(check.name, key);
-    narrowed.set(check.name, { base: base.run, files: plan.files, command: plan.command });
-    if (!useCache) continue;
-    const reuse = ctx.state.reusable(new Map([[check.name, key]])).get(check.name);
-    if (reuse !== undefined) reused.set(check.name, reuse);
-  }
-  return narrowed;
+): Promise<Selected> {
+  const selected: Selected = { narrowed: new Map(), fullRun: new Map() };
+  await Promise.all(
+    checks.map(async (check) => {
+      const selector = check.selector;
+      if (selector === undefined || reused.has(check.name)) return;
+      const base = ctx.state.narrowBase(check);
+      if (base === null) return;
+      const output = changedPaths(ctx.state.root, base.tree, tree);
+      const gate = gateChanges(selector.fullOn, output === null ? null : parseNameStatus(output));
+      if ("full" in gate) {
+        selected.fullRun.set(check.name, { base: base.run, reason: gate.full });
+        return;
+      }
+      const input: SelectorInput = { version: PROTOCOL_VERSION, check: check.name, tree, base, changes: gate.changes };
+      const answer = readSelector(await runSelector(ctx.state.root, selector.select, `${JSON.stringify(input)}\n`));
+      if ("full" in answer) {
+        selected.fullRun.set(check.name, { base: base.run, reason: answer.full });
+        return;
+      }
+      const narrowing = narrowTo(base.run, gate.changes, answer.tests, selector.runSelected);
+      const key = cacheKey(tree, narrowedKeyCommand(narrowing, selector.runSelected), check.after.map((dep) => keys.get(dep)!));
+      keys.set(check.name, key);
+      selected.narrowed.set(check.name, narrowing);
+      if (!useCache) return;
+      const reuse = ctx.state.reusable(new Map([[check.name, key]])).get(check.name);
+      if (reuse !== undefined) reused.set(check.name, reuse);
+    }),
+  );
+  return selected;
+}
+
+// The selector gets its own process group, like a check, so a timeout
+// stops whatever it started too.
+function runSelector(root: string, command: string, input: string): Promise<SelectorExit> {
+  const env = { ...process.env };
+  delete env[RECORD_ENV];
+  return new Promise((resolve) => {
+    const child = spawn("/bin/sh", ["-c", command], { cwd: root, detached: true, stdio: ["pipe", "pipe", "pipe"], env });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (child.pid !== undefined) signalGroup(child.pid, "SIGKILL");
+    }, SELECTOR_TIMEOUT_MS);
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    // A selector may exit without reading its input.
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ error: err.message, timedOut: false, code: null, signal: null, stdout, stderr });
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ error: null, timedOut, code, signal, stdout, stderr });
+    });
+  });
 }
 
 function failedChecks(ctx: Context, previous: string, configured: CheckSpec[]): CheckSpec[] {

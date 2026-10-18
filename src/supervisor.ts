@@ -2,11 +2,14 @@
 // its `after` checks have passed, waits on it, enforces its timeout, and
 // appends every status change to events.jsonl. It is the only writer of
 // that file, so it also records the results the CLI chose to reuse, before
-// it starts anything, and their dependents start at once. It exits when every check is terminal, or after SIGTERM once
-// it has cancelled what was left. It prints nothing; the CLI reads the file.
+// it starts anything, and their dependents start at once, and the pass of a
+// check whose selector chose no test. It gives the full run of a check with
+// a selector its record directory. It exits when every check is terminal,
+// or after SIGTERM once it has cancelled what was left. It prints nothing;
+// the CLI reads the file.
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import {
@@ -20,7 +23,8 @@ import {
   type RunOutcome,
 } from "./checks.ts";
 import { signalGroup } from "./processes.ts";
-import { appendEvent, logPaths, type RunRecord } from "./store.ts";
+import { RECORD_ENV } from "./selection.ts";
+import { appendEvent, logPaths, recordPaths, type RunRecord } from "./store.ts";
 
 export const SUPERVISE_COMMAND = "__supervise";
 export const GRACE_MS = 3_000;
@@ -43,6 +47,7 @@ class Supervisor {
   private readonly run: RunRecord;
   private readonly runDir: string;
   private readonly logs: Map<string, string>;
+  private readonly records: Map<string, string>;
   private readonly states = new Map<string, CheckState>();
   private readonly running = new Map<string, Running>();
   private stopping = false;
@@ -52,6 +57,7 @@ class Supervisor {
     this.run = run;
     this.runDir = runDir;
     this.logs = logPaths(runDir, run.checks);
+    this.records = recordPaths(runDir, run.checks);
     for (const check of run.checks) this.states.set(check.name, initialState(check.name));
   }
 
@@ -123,16 +129,36 @@ class Supervisor {
 
   private launch(check: CheckSpec): void {
     const log = this.logs.get(check.name)!;
+    const narrowing = this.run.narrowed?.[check.name];
+    if (narrowing?.command === null) {
+      const files = narrowing.files.length;
+      writeFileSync(
+        log,
+        `firstlight: not run; the selector chose no test for ${files} changed ${files === 1 ? "file" : "files"} since run ${narrowing.base}\n`,
+      );
+      this.record(check.name, "passed", { elapsed_ms: 0, no_tests: true });
+      return;
+    }
+    // Only a full run records, so the map a selector reads always comes
+    // from a run of every test; an inherited value would point a recorder
+    // at some other run's directory.
+    const env = { ...process.env };
+    delete env[RECORD_ENV];
+    if (check.selector !== undefined && narrowing === undefined) {
+      const dir = this.records.get(check.name)!;
+      mkdirSync(dir, { recursive: true });
+      env[RECORD_ENV] = dir;
+    }
     const fd = openSync(log, "a");
     let child;
     try {
       // detached gives the check its own process group, so one signal to
       // -pid reaches everything the shell started.
-      child = spawn("/bin/sh", ["-c", this.run.narrowed?.[check.name]?.command ?? check.run], {
+      child = spawn("/bin/sh", ["-c", narrowing?.command ?? check.run], {
         cwd: this.run.root,
         detached: true,
         stdio: ["ignore", fd, fd],
-        env: process.env,
+        env,
       });
     } finally {
       closeSync(fd);

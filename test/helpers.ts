@@ -32,12 +32,12 @@ export function makeRepo(files: Record<string, unknown>): Repo {
   return { root, xdg };
 }
 
-export function cli(repo: Repo, args: string[]): Promise<CliResult> {
+export function cli(repo: Repo, args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: repo.root,
-      env: { ...process.env, XDG_STATE_HOME: repo.xdg },
+      env: { ...process.env, ...env, XDG_STATE_HOME: repo.xdg },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

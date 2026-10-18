@@ -8,11 +8,11 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { FILES_PLACEHOLDER } from "./affected.ts";
-import type { CheckSpec, ReportedStatus } from "./checks.ts";
+import type { CheckSpec, ReportedStatus, Selector } from "./checks.ts";
 import { inferParser, isParserChoice, PARSER_CHOICES, PARSERS } from "./diagnostics.ts";
 import { AgentError, messageOf } from "./errors.ts";
 import { expandPattern, isPattern, shellQuote } from "./names.ts";
+import { TESTS_PLACEHOLDER } from "./selection.ts";
 
 export const CONFIG_FILE = "firstlight.json";
 export const DEFAULT_TIMEOUT_SEC = 600;
@@ -28,7 +28,7 @@ const CHECK_LIKE = new Set(["lint", "typecheck", "test", "check", "archstrict"])
 // command or a script glob. ":" is allowed so a check can keep the name of
 // the script it runs, like check:architecture.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
-const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser", "affected", "fullOn"]);
+const CHECK_KEYS = ["run", "after", "timeoutSec", "parser", "select", "runSelected", "fullOn"];
 
 export interface Config {
   source: "firstlight.json" | "package.json";
@@ -90,8 +90,8 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
   }
   if (!isRecord(value)) throw invalid(file, `check "${name}" must be an object`);
   for (const key of Object.keys(value)) {
-    if (!CHECK_KEYS.has(key)) {
-      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are run, after, timeoutSec, parser, affected, fullOn`);
+    if (!CHECK_KEYS.includes(key)) {
+      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are ${CHECK_KEYS.join(", ")}`);
     }
   }
   if (typeof value.run !== "string" || value.run.trim().length === 0) {
@@ -121,20 +121,34 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
     }
     spec.parser = value.parser;
   }
-  if (value.affected !== undefined) {
-    if (typeof value.affected !== "string" || !value.affected.includes(FILES_PLACEHOLDER)) {
-      throw invalid(file, `check "${name}" has "affected" that is not a shell command holding ${FILES_PLACEHOLDER}, like "vitest related --run ${FILES_PLACEHOLDER}"`);
-    }
-    spec.affected = value.affected;
-  }
-  if (value.fullOn !== undefined) {
-    if (!Array.isArray(value.fullOn) || !value.fullOn.every((glob) => typeof glob === "string" && glob.length > 0)) {
-      throw invalid(file, `check "${name}" has "fullOn" that is not an array of path globs`);
-    }
-    if (spec.affected === undefined) throw invalid(file, `check "${name}" has "fullOn" without "affected"`);
-    spec.fullOn = value.fullOn as string[];
-  }
+  const selector = parseSelector(name, value, file);
+  if (selector !== null) spec.selector = selector;
   return spec;
+}
+
+// The three keys are one setting: a selector without the command that runs
+// its answer, or a fullOn with nothing to fall back from, could never act.
+function parseSelector(name: string, value: Record<string, unknown>, file: string): Selector | null {
+  const { select, runSelected, fullOn } = value;
+  if (select === undefined) {
+    if (runSelected !== undefined) throw invalid(file, `check "${name}" has "runSelected" without "select"`);
+    if (fullOn !== undefined) throw invalid(file, `check "${name}" has "fullOn" without "select"`);
+    return null;
+  }
+  if (typeof select !== "string" || select.trim().length === 0) {
+    throw invalid(file, `check "${name}" needs "select" to be a non-empty shell command string`);
+  }
+  if (runSelected === undefined) throw invalid(file, `check "${name}" has "select" without "runSelected"`);
+  if (typeof runSelected !== "string" || !runSelected.includes(TESTS_PLACEHOLDER)) {
+    throw invalid(
+      file,
+      `check "${name}" has "runSelected" that is not a shell command holding ${TESTS_PLACEHOLDER}, like "vitest run ${TESTS_PLACEHOLDER}"`,
+    );
+  }
+  if (fullOn !== undefined && !(Array.isArray(fullOn) && fullOn.every((glob) => typeof glob === "string" && glob.length > 0))) {
+    throw invalid(file, `check "${name}" has "fullOn" that is not an array of path globs`);
+  }
+  return { select, runSelected, fullOn: (fullOn as string[] | undefined) ?? [] };
 }
 
 function validateGraph(checks: CheckSpec[], file: string): void {

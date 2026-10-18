@@ -3,10 +3,12 @@
 // events.jsonl through the same transition table, so the file can never
 // describe a path the machine does not allow. This module does no I/O.
 //
-// A result reused from an earlier run is the one step outside the table:
-// `passed` or `failed` straight from `pending`, legal only on an event that
-// names the run it came from. Widening the table instead would let any
-// check pass without ever running.
+// Two steps lie outside the table, each legal only on an event that says
+// why: a result reused from an earlier run, `passed` or `failed` straight
+// from `pending` with the run it came from, and a pass straight from
+// `pending` when the check's selector chose no test, marked `no_tests`.
+// Widening the table instead would let any check pass without ever
+// running.
 
 export type CheckStatus =
   | "pending"
@@ -41,8 +43,9 @@ export function canAdvance(from: CheckStatus, to: CheckStatus): boolean {
   return TRANSITIONS[from].includes(to);
 }
 
-export function canApply(from: CheckStatus, event: Pick<CheckEvent, "status" | "cached_from">): boolean {
+export function canApply(from: CheckStatus, event: Pick<CheckEvent, "status" | "cached_from" | "no_tests">): boolean {
   if (event.cached_from !== undefined) return from === "pending" && (event.status === "passed" || event.status === "failed");
+  if (event.no_tests === true) return from === "pending" && event.status === "passed";
   return canAdvance(from, event.status);
 }
 
@@ -55,11 +58,17 @@ export interface CheckSpec {
   // infer it; `run` records the outcome, a parser name, a list of them, or
   // null, in run.json.
   parser?: string | string[] | null;
-  // The command that runs only what the changed files reach, with
-  // `{files}` where they go, and the path globs whose change runs the full
-  // command anyway. See affected.ts.
-  affected?: string;
-  fullOn?: string[];
+  selector?: Selector;
+}
+
+// A check's way to run only the tests the changes reach. See selection.ts.
+export interface Selector {
+  // The command that answers which tests the changes reach.
+  select: string;
+  // The command that runs them, with `{tests}` where their ids go.
+  runSelected: string;
+  // Path globs whose change runs the full command without asking.
+  fullOn: string[];
 }
 
 export interface CheckEvent {
@@ -72,6 +81,8 @@ export interface CheckEvent {
   elapsed_ms?: number;
   // The run that ran the check; elapsed_ms is then that run's time.
   cached_from?: string;
+  // The selector chose no test, so the check passed without a process.
+  no_tests?: true;
 }
 
 export type RunOutcome = "done" | "cancelled";

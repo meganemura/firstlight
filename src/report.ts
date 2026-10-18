@@ -11,6 +11,7 @@ import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { FALLBACK_SCRIPTS } from "./config.ts";
 import { formatDiagnostic, isParserChoice, parseDiagnostics, parserList, type Diagnostic } from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
+import type { Narrowing } from "./selection.ts";
 import { logPaths, readLogEnd, tailLines, type RunRecord, type RunSnapshot } from "./store.ts";
 
 export const TAIL_LINES = 40;
@@ -120,6 +121,8 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, c
   };
   const narrowing = snapshot.run.narrowed?.[view.name];
   if (narrowing !== undefined) line.narrowed = narrowing;
+  const fullRun = snapshot.run.full_run?.[view.name];
+  if (fullRun !== undefined) line.full_run = fullRun;
   if (view.orphan) line.orphan = true;
   if (compared !== undefined) {
     line.new = compared.comparison?.isNew ?? false;
@@ -308,19 +311,23 @@ export function allPassedText(snapshot: RunSnapshot, notRun: string[] = []): str
 
 function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string {
   const details: string[] = [];
+  const narrowing = snapshot.run.narrowed?.[view.name];
   if (view.orphan) {
     details.push("orphan: the supervisor is gone, so the result is unknown");
   } else if (view.cached_from !== null) {
     details.push(`cached from run ${view.cached_from}`);
     if (view.elapsed_ms !== null) details.push(`${(view.elapsed_ms / 1000).toFixed(1)}s originally`);
-    const narrowing = snapshot.run.narrowed?.[view.name];
-    if (narrowing !== undefined) details.push(narrowedText(narrowing.files.length, narrowing.base));
+    if (narrowing !== undefined) details.push(narrowedText(narrowing));
   } else if (view.status === "skipped") {
     const spec = snapshot.run.checks.find((check) => check.name === view.name);
     details.push(`needs ${spec?.after.join(", ") ?? "?"}`);
+  } else if (narrowing?.command === null && view.status === "passed") {
+    // Nothing ran, so there is no exit code or time to show.
+    details.push(narrowedText(narrowing));
   } else {
-    const narrowing = snapshot.run.narrowed?.[view.name];
-    if (narrowing !== undefined) details.push(narrowedText(narrowing.files.length, narrowing.base));
+    if (narrowing !== undefined) details.push(narrowedText(narrowing));
+    const fullRun = snapshot.run.full_run?.[view.name];
+    if (fullRun !== undefined) details.push(`full run: ${fullRun.reason}`);
     if (view.exit_code !== null) details.push(`exit ${view.exit_code}`);
     const elapsed =
       view.elapsed_ms ?? (view.status === "running" && view.started_at !== null ? Date.now() - Date.parse(view.started_at) : null);
@@ -336,8 +343,10 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
   return details.length === 0 ? `${view.name} ${view.status}` : `${view.name} ${view.status} (${details.join(", ")})`;
 }
 
-function narrowedText(count: number, base: string): string {
-  return `narrowed to ${count} ${plural(count, "file")} since run ${base}`;
+function narrowedText(narrowing: Narrowing): string {
+  const tests = narrowing.tests.length;
+  const files = narrowing.files.length;
+  return `selected ${tests} ${plural(tests, "test")} for ${files} changed ${plural(files, "file")} since run ${narrowing.base}`;
 }
 
 function countsLine(snapshot: RunSnapshot, eta: RunEta): string {

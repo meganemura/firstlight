@@ -1,7 +1,8 @@
 // Properties of the check state machine: a fold over any legal event
 // sequence ends where each check's last event put it, an event the
 // transition table does not allow is rejected wherever it appears, and a
-// reused pass is legal only as the first and only step of a check.
+// reused pass or a pass with no test selected is legal only as the first
+// and only step of a check.
 
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -116,6 +117,27 @@ test("a reused result is legal only as passed or failed straight from pending", 
         assert.equal(state!.started_at, null);
       } else {
         assert.equal(canApply(from, reused), false);
+        assert.throws(() => foldEvents(["c"], events), IllegalTransition);
+      }
+    },
+    { testCases: 200 },
+  );
+});
+
+test("a pass with no test selected is legal only straight from pending", () => {
+  hegel.test(
+    (tc) => {
+      const from = tc.draw(gs.sampledFrom(CHECK_STATUSES));
+      const to = tc.draw(gs.sampledFrom(CHECK_STATUSES));
+      const none: CheckEvent = { ...event("c", to), no_tests: true };
+      const events = [...pathTo(from).map((status) => event("c", status)), none];
+      if (from === "pending" && to === "passed") {
+        const [state] = foldEvents(["c"], events).checks;
+        assert.equal(state!.status, "passed");
+        assert.equal(state!.started_at, null);
+        assert.equal(state!.cached_from, null);
+      } else {
+        assert.equal(canApply(from, none), false);
         assert.throws(() => foldEvents(["c"], events), IllegalTransition);
       }
     },
