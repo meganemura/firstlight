@@ -30,7 +30,9 @@ export default {
   // The layers, bottom to top. A file may import its own layer or a lower
   // one, never a higher one. The part says which side of the selector
   // protocol a file is on: firstlight's core, the protocol itself, or the
-  // Node selector, which speaks only the protocol.
+  // Node selector, which speaks only the protocol. Inside the Node selector,
+  // the recorder and the file names it shares with the command are parts of
+  // their own, so that the recorder can import nothing else of src/.
   classify: [
     { glob: "src/baseline.ts", tags: ["layer:machine", "part:core"] },
     { glob: "src/cache.ts", tags: ["layer:machine", "part:core"] },
@@ -48,6 +50,8 @@ export default {
     { glob: "src/supervisor.ts", tags: ["layer:run", "part:core"] },
     { glob: "src/cli.ts", tags: ["layer:entry", "part:core"] },
     { glob: "src/node/**", tags: ["layer:adapter", "part:node"] },
+    { glob: "src/node/layout.ts", tags: ["layer:adapter", "part:node-layout"] },
+    { glob: "src/node/vitest-setup.ts", tags: ["layer:adapter", "part:node-recorder"] },
   ],
   // One module per source file, so every import between two files of src/
   // is checked. After an edit, run archstrict init to regenerate
@@ -110,9 +114,16 @@ export default {
       {
         source: "part:node",
         targetNamespace: "part",
-        allow: ["protocol"],
+        allow: ["protocol", "node-layout"],
         because:
           "the Node selector is one language's plug-in, and the selector protocol in selection.ts is the only thing it shares with firstlight; another language's selector gets no more than that",
+      },
+      {
+        source: "part:node-recorder",
+        targetNamespace: "part",
+        allow: ["node-layout"],
+        because:
+          "the recorder starts V8's coverage, and V8 under-reports the functions of a module that loaded before then, so a file of src/ the recorder imports drops out of the map and a change to it selects too few tests; layout.ts holds only constants",
       },
     ],
   },

@@ -1,8 +1,10 @@
 // The recorder, a vitest setup file. In a run firstlight starts with
 // FIRSTLIGHT_RECORD set, it records which code one test file runs, in its
 // own worker and in every Node process the test starts, as raw V8 coverage
-// in the layout map.ts reads. It only writes; firstlight-node select reads.
-// Without FIRSTLIGHT_RECORD it does nothing, so it can stay in the config.
+// in the layout layout.ts names. It only writes; firstlight-node select
+// reads. Without FIRSTLIGHT_RECORD it does nothing, so it can stay in the
+// config. It imports no other file of the repository: V8 under-reports the
+// functions of a module that loaded before the coverage started.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -10,8 +12,7 @@ import { Session } from "node:inspector/promises";
 import path from "node:path";
 import { threadId } from "node:worker_threads";
 import { afterAll, expect } from "vitest";
-import { RECORD_ENV } from "../selection.ts";
-import { RAW_DIR, TEST_MARKER } from "./map.ts";
+import { RAW_DIR, RECORD_ENV, TEST_MARKER } from "./layout.ts";
 
 // Named apart from the files NODE_V8_COVERAGE writes, coverage-<pid>-*.json.
 const WORKER_COVERAGE = "coverage-worker.json";

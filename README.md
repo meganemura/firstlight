@@ -487,7 +487,7 @@ and the selector goes in the check:
 
 - vitest with `test.experimental.viteModuleRunner: false` (tested with vitest 4.1.11). Node then loads each module itself, and V8's coverage names the file of each function. Through vite's module runner, V8 names no file. The recorded positions are positions in the source, because Node runs JavaScript as written and TypeScript with its types replaced by spaces. Code that needs a transform before Node can run it (an `enum`, JSX, decorators) cannot be recorded this way.
 - One test file per worker: `isolate: true`, the default. Tested with the default `forks` pool. When two test files ran in one worker, the selector asks for the full run and says so.
-- The recorder first in `setupFiles`, so that the other setup files run while it records.
+- The recorder first in `setupFiles`. V8 under-reports the functions of a module that loaded before its coverage started, so a module that an earlier setup file imports loses functions from the map, and a change to one of them selects too few tests.
 - A process that a test starts keeps `NODE_V8_COVERAGE` in its environment. A process started with an environment that leaves it out is not recorded.
 
 **Recording.** The setup file does nothing unless `FIRSTLIGHT_RECORD` is set, so it can stay in the config. When it is set, which firstlight does only for the full run of a check with a selector, the setup file starts V8's precise coverage in the worker and sets `NODE_V8_COVERAGE` for the processes that the test starts. Each test file gets a directory under `$FIRSTLIGHT_RECORD/raw/` with its path, the worker's coverage, and one coverage file for each Node process that exited without a signal. The setup file reads nothing.

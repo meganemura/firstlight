@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { onTestFinished, test } from "vitest";
 import { HELP, main } from "../src/node/command.ts";
+import { RECORD_ENV as RECORDER_ENV } from "../src/node/layout.ts";
+import { RECORD_ENV } from "../src/selection.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -35,6 +37,10 @@ function answer(args: string[], stdin: string, root = ROOT): Promise<{ code: num
 function printed(value: unknown): { code: number; stdout: string; stderr: string } {
   return { code: 0, stdout: `${JSON.stringify(value)}\n`, stderr: "" };
 }
+
+test("the recorder reads the variable firstlight sets for a full run", () => {
+  assert.equal(RECORDER_ENV, RECORD_ENV);
+});
 
 test("--help prints the usage, and arguments the command does not know are refused with exit 2", async () => {
   for (const words of ["Usage:", "firstlight-node select [--always <glob>]... [--ignore <glob>]...", "firstlight/node/vitest-setup", "viteModuleRunner: false", "isolate: true"]) {

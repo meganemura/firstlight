@@ -9,7 +9,8 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSyn
 import path from "node:path";
 import { PROTOCOL_VERSION, type Change, type SelectorAnswer } from "../selection.ts";
 import { field, parseJson } from "./json.ts";
-import { buildMap, MAP_FILE, parseCoverage, parseMap, parseTestFile, RAW_DIR, TEST_MARKER, type CoverageMap, type RawRecord } from "./map.ts";
+import { MAP_FILE, RAW_DIR, TEST_MARKER } from "./layout.ts";
+import { buildMap, parseCoverage, parseMap, parseTestFile, type CoverageMap, type RawRecord } from "./map.ts";
 import { editsNeeded, parseHunks, selectTests, type Edit, type SelectOptions } from "./select.ts";
 
 const GIT_TIMEOUT_MS = 30_000;

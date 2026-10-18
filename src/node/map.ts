@@ -9,12 +9,6 @@ import { fileURLToPath } from "node:url";
 import { field, parseJson } from "./json.ts";
 
 export const MAP_VERSION = 1;
-// The recorder's layout under $FIRSTLIGHT_RECORD: one directory per test
-// file under RAW_DIR, holding TEST_MARKER and any number of coverage files,
-// the worker's own and one for each process the test started.
-export const RAW_DIR = "raw";
-export const TEST_MARKER = "test.json";
-export const MAP_FILE = "map.json";
 
 // Offsets into the source text Node compiled. Node strips TypeScript types
 // by blanking them, so these are offsets into the file as written.
