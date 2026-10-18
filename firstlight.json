@@ -1,7 +1,12 @@
 {
   "checks": {
     "typecheck": { "run": "npm run typecheck" },
-    "test": { "run": "npm test" },
+    "test": {
+      "run": "npm test",
+      "select": "node src/node/cli.ts select --always test/pack.test.ts --ignore '*.md' --ignore '**/*.md' --ignore 'features/**' --ignore '.github/**'",
+      "runSelected": "npm test -- --passWithNoTests {tests}",
+      "fullOn": ["package-lock.json", "vitest.config.ts", "tsconfig.json", "test/helpers.ts"]
+    },
     "archstrict": { "run": "npm run archstrict" },
     "scenarios": { "run": "npm run test:scenarios" },
     "mutation": { "run": "npm run mutation -- --mutate src/checks.ts,src/config.ts", "timeoutSec": 300 }

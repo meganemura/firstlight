@@ -33,9 +33,9 @@ The user-facing description is in `README.md`.
 - `test/pack.test.ts`: packs the package with `npm pack`, installs the tarball into a temporary project, runs the installed `firstlight` and `firstlight-node` bins, and resolves `firstlight/node/vitest-setup`. It is the only test that reaches `dist/`.
 - `tsconfig.build.json`: the build. It compiles `src/` to `dist/` (gitignored) and rewrites `.ts` relative imports to `.js`. The supervisor is `dist/cli.js` started again, so the published package spawns plain JavaScript.
 - `.github/workflows/publish.yml` and `docs/releasing.md`: the npm release through a trusted publisher when a version bump lands on `main` (the workflow then creates the `v*` tag and the GitHub release), and the record of the one-time bootstrap.
-- `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`.
+- `stryker.config.json`: mutation testing with the `agent` reporter, which writes `reports/mutation/agent.jsonl`. `vitest.config.ts` loads the recorder and turns off vite's module runner, which the recorder needs; Stryker and depug work the same with it off.
 - `features/` and `nukadoko.config.ts`: the agent flow as a nukadoko scenario (run, a fast failure back while a slow check runs, `results --wait`, `run --failed`), with typed steps that run `src/cli.ts` in a scratch repository with its own `XDG_STATE_HOME`. The `scratch` fixture removes those directories after the scenario.
-- `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, `scenarios`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`.
+- `firstlight.json`: firstlight checks itself with `typecheck`, `test`, `archstrict`, `scenarios`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`. `test` selects its tests with the Node selector from source, and always runs `test/pack.test.ts`, which tests `dist/`, a path the recording never maps to `src/`.
 
 ## Rules
 
