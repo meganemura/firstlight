@@ -144,7 +144,8 @@ ids in place of {tests}: "test passed (selected 2 tests for 3 changed
 files since run 01K..., 3.1s)". No test selected passes without running.
 A file matching one of its "fullOn" globs, a selector that fails or
 prints anything else, or --full runs the full command: "test passed
-(full run: <reason>, 10.2s)". firstlight ships no selector.
+(full run: <reason>, 10.2s)". For vitest, the package's own selector is
+"firstlight-node select"; see firstlight-node --help.
 
 A failed or timed-out check whose log a parser reads prints its
 diagnostics, at most 20, as "file:line:col rule message" lines before a

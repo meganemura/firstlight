@@ -131,7 +131,7 @@ node src/cli.ts --help
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
 | `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`, or a list of them, like `["tsc", "vitest"]`, read in order. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
-| `select` | A selector: a command that reads the changes since the check's last full pass on stdin and prints the tests they reach. It needs `runSelected`. See [Selecting tests](#selecting-tests). |
+| `select` | A selector: a command that reads the changes since the check's last full pass on stdin and prints the tests they reach. It needs `runSelected`. See [Selecting tests](#selecting-tests), and [Selecting vitest tests](#selecting-vitest-tests) for the selector the package ships. |
 | `runSelected` | The command that runs the selected tests, with `{tests}` where their ids go, like `vitest run {tests}`. It needs `select`. |
 | `fullOn` | Path globs whose change runs the full `run` command without asking the selector, like `["package-lock.json", "vitest.config.ts"]`. `*` stays inside one directory and `**` crosses directories. It needs `select`. |
 
@@ -387,7 +387,7 @@ A check with a selector runs only the tests that the changes reach, once it has 
 }
 ```
 
-firstlight knows no language. It decides when to narrow a check, gives the selector the changes, and runs the tests that the selector returns. A selector is any command that reads one JSON object on stdin and prints one JSON object on stdout. firstlight ships no selector yet. A selector for one language records during the full run which tests reach which files, and selects from that record later.
+firstlight knows no language. It decides when to narrow a check, gives the selector the changes, and runs the tests that the selector returns. A selector is any command that reads one JSON object on stdin and prints one JSON object on stdout. A selector for one language records during the full run which tests reach which files, and selects from that record later. For vitest, the package ships one: see [Selecting vitest tests](#selecting-vitest-tests).
 
 **Recording.** When a check with `select` runs its full `run` command, firstlight creates a directory for it in the run's state and sets `FIRSTLIGHT_RECORD` to that directory's absolute path for the check's process. A recorder in the test run can write its map there. firstlight removes the directory when it prunes the run. A narrowed run does not set `FIRSTLIGHT_RECORD`.
 
@@ -448,6 +448,66 @@ A narrowed run never becomes the base of a later narrowing, so the changes alway
 In `--json`, the check line gets `narrowed` when the selector selected the tests: `{"base": "<run id>", "files": [...], "tests": [{"id": "...", ...}], "command": "..."}`, where `command` is `null` when it selected none. It gets `full_run` when the check ran in full after all: `{"base": "<run id>", "reason": "..."}`. `run.json` records both fields under the same names, keyed by check.
 
 The limit is the selector's record. A test that reads a file at run time, or starts the code as a child process, reaches that code only when the recorder sees it. Put the files that every test depends on in `fullOn`, and run `firstlight run --full` before a merge.
+
+## Selecting vitest tests
+
+The package ships a selector for Node projects that test with vitest. Its recorder is a vitest setup file: during a full run, it records which functions each test file ran, in the test's own worker and in every Node process the test started. `firstlight-node select` reads that record and selects a test file only when a change touched code that the test file ran. Running the code is what counts, not importing it: a test that starts the CLI as a child process reaches the CLI's code, and a test that imports a module but never calls a function does not reach that function.
+
+Two settings go in the vitest config:
+
+```ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    setupFiles: ["firstlight/node/vitest-setup"],
+    experimental: { viteModuleRunner: false },
+  },
+});
+```
+
+and the selector goes in the check:
+
+```json
+{
+  "checks": {
+    "test": {
+      "run": "vitest run",
+      "select": "firstlight-node select --ignore '*.md' --ignore '**/*.md'",
+      "runSelected": "vitest run --passWithNoTests {tests}",
+      "fullOn": ["package-lock.json", "vitest.config.ts"]
+    }
+  }
+}
+```
+
+`--passWithNoTests` keeps a narrowed run green when the selected files hold no test that vitest's `include` matches, such as a new `*.test.ts` file outside it.
+
+**Requirements.**
+
+- vitest with `test.experimental.viteModuleRunner: false` (tested with vitest 4.1.11). Node then loads each module itself, and V8's coverage names the file of each function. Through vite's module runner, V8 names no file. The recorded positions are positions in the source, because Node runs JavaScript as written and TypeScript with its types replaced by spaces. Code that needs a transform before Node can run it (an `enum`, JSX, decorators) cannot be recorded this way.
+- One test file per worker: `isolate: true`, the default. Tested with the default `forks` pool. When two test files ran in one worker, the selector asks for the full run and says so.
+- The recorder first in `setupFiles`, so that the other setup files run while it records.
+- A process that a test starts keeps `NODE_V8_COVERAGE` in its environment. A process started with an environment that leaves it out is not recorded.
+
+**Recording.** The setup file does nothing unless `FIRSTLIGHT_RECORD` is set, so it can stay in the config. When it is set, which firstlight does only for the full run of a check with a selector, the setup file starts V8's precise coverage in the worker and sets `NODE_V8_COVERAGE` for the processes that the test starts. Each test file gets a directory under `$FIRSTLIGHT_RECORD/raw/` with its path, the worker's coverage, and one coverage file for each Node process that exited without a signal. The setup file reads nothing.
+
+The first selection from a recording turns the raw coverage into `map.json` in the same directory and removes the raw files. The map holds, for each source file in the repository and outside `node_modules`, the functions that any test compiled, and for each test file, the source files it loaded and the functions it ran.
+
+**Selection.** For each changed file that no `--ignore` glob matches:
+
+- A changed test file selects itself: a test file in the recording, or a new file named `*.test.*` or `*.spec.*` with a JavaScript or TypeScript extension. A deleted test file is never selected.
+- A changed source file that a test loaded is diffed between the base tree and the current tree (`git diff -U0`), and each changed line goes to the innermost function whose body holds it. A test file is selected when it ran one of those functions. A function's body starts on the line after its first line, so a change to a function's name or signature counts as a change to the code around the function. A change outside every function body (an import, a top-level statement, a function that no test compiled) selects every test file that loaded the source file. A deleted source file selects every test file that loaded it.
+- A source file with a JavaScript or TypeScript extension (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`) that no test loaded selects nothing.
+- Any other file asks for the full run, because a test can read it at run time and coverage does not see a read: `{"full": "test/fixtures/a.json is not code and no recording covers it"}`.
+
+`--always <glob>` selects every recorded test file that matches. Use it for a test of built output: the recording names `dist/cli.js`, not the `src/cli.ts` it was built from. `--ignore <glob>` leaves out every changed file that matches. The globs work like `fullOn`: `*` stays inside one directory and `**` crosses directories, so `**/*.md` does not match `README.md` at the root, and `*.md` does.
+
+Each selected test's id is its path relative to the repository root, and its `reason` names the change, such as `"src/math.ts changed in triple"`, `"src/math.ts changed outside any function"`, `"changed"`, or `"--always"`.
+
+**Full runs.** Beside firstlight's own reasons, the selector asks for the full run when the base run left no recording (the setup file is not in the vitest config, or vitest ran without firstlight), when two test files ran in one worker, when another version of `firstlight-node` wrote the map, and when a changed file is not code.
+
+**Limits.** The vitest config, `globalSetup` files, and any other code that runs outside a test file's worker are not recorded: put them in `fullOn`. A new source file that a test loads by listing a directory, not by an import, selects nothing until a file that loads it changes. A process killed by a signal writes no coverage. A test whose inputs change from run to run, such as a property test, can run a function in one run and not in the next, and the selection follows the run that was recorded: two recordings of this repository's suite differed in 1 to 6 of about 3,580 pairs of a test file and a function it ran, all in one property test file. `--always '**/*.property.test.ts'` runs such tests on every change. Run `firstlight run --full` before a merge.
 
 ## CPU contention
 

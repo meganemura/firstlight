@@ -23,7 +23,12 @@
   },
   "type": "module",
   "bin": {
-    "firstlight": "./dist/cli.js"
+    "firstlight": "./dist/cli.js",
+    "firstlight-node": "./dist/node/cli.js"
+  },
+  "exports": {
+    "./node/vitest-setup": "./dist/node/vitest-setup.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

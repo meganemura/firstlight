@@ -1,11 +1,11 @@
 // Packs the package as npm would publish it, installs the tarball into a
-// throwaway project, and runs the installed bin. This is the only test that
+// throwaway project, and runs the installed bins and resolves the recorder. This is the only test that
 // reaches dist/: the others run src/ through Node's type stripping, which
 // Node refuses for files under node_modules.
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { onTestFinished, test } from "vitest";
@@ -24,7 +24,7 @@ function npm(args: string[], cwd: string): string {
   });
 }
 
-test("the packed tarball installs a firstlight bin that runs a check", { timeout: 120_000 }, async () => {
+test("the packed tarball installs a firstlight bin that runs a check, and the Node selector with its recorder", { timeout: 120_000 }, async () => {
   const work = realpathSync(mkdtempSync(path.join(tmpdir(), "firstlight-pack-")));
   onTestFinished(() => rmSync(work, { recursive: true, force: true }));
 
@@ -35,6 +35,8 @@ test("the packed tarball installs a firstlight bin that runs a check", { timeout
   const files = packed[0]!.files.map((file) => file.path);
   assert.ok(files.includes("dist/cli.js"), files.join("\n"));
   assert.ok(files.includes("dist/supervisor.js"), files.join("\n"));
+  assert.ok(files.includes("dist/node/cli.js"), files.join("\n"));
+  assert.ok(files.includes("dist/node/vitest-setup.js"), files.join("\n"));
   assert.deepEqual(
     files.filter((file) => !file.startsWith("dist/")).sort(),
     ["CHANGELOG.md", "LICENSE", "README.md", "package.json"],
@@ -63,4 +65,18 @@ test("the packed tarball installs a firstlight bin that runs a check", { timeout
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(checkStatuses(run.stdout), { true: "passed" });
   assert.deepEqual(parseLines(run.stdout).at(-1)!.passed, ["true"]);
+
+  const selector = path.join(project, "node_modules", ".bin", "firstlight-node");
+  assert.match(readFileSync(selector, "utf8"), /^#!\/usr\/bin\/env node\n/);
+  const input = JSON.stringify({ version: 1, check: "test", tree: "t2", base: { run: "r1", tree: "t1", record: null }, changes: [] });
+  const selected = spawnSync(selector, ["select"], { cwd: project, input, encoding: "utf8", env: { ...process.env, PATH } });
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.equal(selected.stdout, `${JSON.stringify({ full: "no recording in the base run" })}\n`);
+
+  const resolved = execFileSync(process.execPath, ["--input-type=module", "-e", "console.log(import.meta.resolve('firstlight/node/vitest-setup'))"], {
+    cwd: project,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(resolved, `file://${path.join(project, "node_modules", "firstlight", "dist", "node", "vitest-setup.js")}`);
+  assert.ok(existsSync(new URL(resolved)));
 });
