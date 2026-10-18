@@ -30,6 +30,7 @@ export default {
   // The layers, bottom to top. A file may import its own layer or a lower
   // one, never a higher one.
   classify: [
+    { glob: "src/affected.ts", tags: ["layer:machine"] },
     { glob: "src/baseline.ts", tags: ["layer:machine"] },
     { glob: "src/cache.ts", tags: ["layer:machine"] },
     { glob: "src/checks.ts", tags: ["layer:machine"] },
@@ -50,6 +51,7 @@ export default {
   // archstrict.types.ts.
   declaredModules: [
     // Each directory and TypeScript source file directly in src/.
+    { name: "affected.ts", glob: "src/affected.ts", surface: "affected.ts" },
     { name: "baseline.ts", glob: "src/baseline.ts", surface: "baseline.ts" },
     { name: "cache.ts", glob: "src/cache.ts", surface: "cache.ts" },
     { name: "checks.ts", glob: "src/checks.ts", surface: "checks.ts" },
@@ -70,6 +72,7 @@ export default {
   // No frozen debt. A later violation in any of these fails check rather
   // than landing in the todo file.
   strict: [
+    "affected.ts",
     "baseline.ts",
     "cache.ts",
     "checks.ts",
@@ -93,7 +96,7 @@ export default {
         sequence: { "": ["machine", "base", "run", "entry"] },
         direction: "downward-only",
         because:
-          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, baseline.ts the pure comparison of a run's failures with an earlier run's, cache.ts the pure cache keys and reuse lookup, diagnostics.ts the pure log parsers and parser inference, and names.ts the pure glob and log-file naming; config, errors, processes, store, and tree do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
+          "checks.ts is the pure state machine everything else folds through, eta.ts the pure estimate on top of it, baseline.ts the pure comparison of a run's failures with an earlier run's, cache.ts the pure cache keys and reuse lookup, affected.ts the pure narrowing of a check to the changed files, diagnostics.ts the pure log parsers and parser inference, and names.ts the pure glob and log-file naming; config, errors, processes, store, and tree do the I/O; report and supervisor build on them; cli.ts is the entry and nothing imports it",
       },
     ],
   },

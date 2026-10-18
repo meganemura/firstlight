@@ -57,6 +57,18 @@ export interface RunRecord {
   // The results the CLI chose to reuse; the supervisor records them as
   // events, so it stays the only writer of events.jsonl.
   reused?: Record<string, Reuse>;
+  // The tree key the run was keyed on; a later run diffs against it to
+  // narrow a check. Absent in a run written before narrowing existed.
+  tree?: string;
+  // The checks this run narrowed to the files changed since a full pass.
+  narrowed?: Record<string, Narrowing>;
+}
+
+export interface Narrowing {
+  // The run whose full pass the files are counted from.
+  base: string;
+  files: string[];
+  command: string;
 }
 
 interface PastRunFiles {
@@ -136,7 +148,13 @@ export class RepoState {
     atomicWrite(path.join(this.dir, "current"), `${id}\n`);
   }
 
-  createRun(checks: CheckSpec[], cacheKeys: ReadonlyMap<string, string>, reused: ReadonlyMap<string, Reuse>): RunRecord {
+  createRun(
+    checks: CheckSpec[],
+    cacheKeys: ReadonlyMap<string, string>,
+    reused: ReadonlyMap<string, Reuse>,
+    tree: string | null = null,
+    narrowed: ReadonlyMap<string, Narrowing> = new Map(),
+  ): RunRecord {
     const id = newRunId();
     mkdirSync(this.runDir(id), { recursive: true });
     const run: RunRecord = {
@@ -148,6 +166,8 @@ export class RepoState {
       cache_keys: Object.fromEntries(cacheKeys),
       reused: Object.fromEntries(reused),
     };
+    if (tree !== null) run.tree = tree;
+    if (narrowed.size > 0) run.narrowed = Object.fromEntries(narrowed);
     this.writeRun(run);
     return run;
   }
@@ -248,6 +268,21 @@ export class RepoState {
       else found.set(name, { ...reuse, log });
     }
     return found;
+  }
+
+  // The newest kept run whose own tree this check passed in full, with the
+  // same command: a narrowed pass only proves the files it was given, so
+  // counting from it would let changes slip between two narrowings.
+  narrowBase(check: CheckSpec): { run: string; tree: string } | null {
+    for (const files of this.pastRuns()) {
+      const { record, states } = files;
+      if (record.tree === undefined || record.narrowed?.[check.name] !== undefined) continue;
+      const spec = record.checks.find((candidate) => candidate.name === check.name);
+      if (spec?.run !== check.run) continue;
+      if (states.find((state) => state.name === check.name)?.status !== "passed") continue;
+      return { run: record.id, tree: record.tree };
+    }
+    return null;
   }
 
   // Newest first. Only the kept runs are read, so the history costs no file
@@ -407,6 +442,8 @@ function isRunRecord(value: unknown): value is RunRecord {
   if (!Array.isArray(value.checks)) return false;
   if (value.cache_keys !== undefined && !isStringRecord(value.cache_keys)) return false;
   if (value.reused !== undefined && !isReuseRecord(value.reused)) return false;
+  if (value.tree !== undefined && typeof value.tree !== "string") return false;
+  if (value.narrowed !== undefined && !isNarrowedRecord(value.narrowed)) return false;
   return value.checks.every(
     (check) =>
       isRecord(check) &&
@@ -447,6 +484,20 @@ function isReuseRecord(value: unknown): value is Record<string, Reuse> {
         (entry.status === undefined || entry.status === "passed" || entry.status === "failed") &&
         (entry.exit_code === undefined || Number.isInteger(entry.exit_code)) &&
         (entry.log === undefined || typeof entry.log === "string"),
+    )
+  );
+}
+
+function isNarrowedRecord(value: unknown): value is Record<string, Narrowing> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.base === "string" &&
+        typeof entry.command === "string" &&
+        Array.isArray(entry.files) &&
+        entry.files.every((file) => typeof file === "string"),
     )
   );
 }

@@ -11,7 +11,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { compareFailures, isFailure, isUnproven, type Outcome } from "./baseline.ts";
-import { cacheKeys } from "./cache.ts";
+import { planNarrowing, parseNameStatus } from "./affected.ts";
+import { cacheKey, cacheKeys, type Reuse } from "./cache.ts";
 import { bucketOf, IllegalTransition, isSettled, presentChecks, replay, type CheckSpec, type CheckView } from "./checks.ts";
 import {
   CONFIG_FILE,
@@ -41,9 +42,9 @@ import {
   text,
   type Comparison,
 } from "./report.ts";
-import { eventsPath, readEvents, RepoState, resolveRoot, type RunSnapshot } from "./store.ts";
+import { eventsPath, readEvents, RepoState, resolveRoot, type Narrowing, type RunSnapshot } from "./store.ts";
 import { supervise, SUPERVISE_COMMAND } from "./supervisor.ts";
-import { treeKey } from "./tree.ts";
+import { changedPaths, treeKey } from "./tree.ts";
 
 const POLL_MS = 50;
 const STOP_WAIT_MS = 5_000;
@@ -51,8 +52,8 @@ const STOP_WAIT_MS = 5_000;
 const HELP = `firstlight: run lint, typecheck, and tests in parallel; return at the first failure.
 
 Usage:
-  firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--cwd DIR] [--json]
-  firstlight run --failed [--no-cache] [--cwd DIR] [--json]
+  firstlight run [name|pattern|"command"...] [-- command...] [--no-cache] [--full] [--cwd DIR] [--json]
+  firstlight run --failed [--no-cache] [--full] [--cwd DIR] [--json]
   firstlight results [--wait] [--new] [--cwd DIR] [--json]
   firstlight follow [--cwd DIR] [--json]
   firstlight stop [--cwd DIR] [--json]
@@ -120,6 +121,14 @@ on that tree with that command and never passed there: "test failed
 (cached from run 01K..., 10.4s originally)", with that run's log. Only in
 a git repository.
 
+A check in firstlight.json with "affected", a command holding {files},
+runs only what the changed files reach: once it has passed in full, a
+later run gives it the files changed since that full pass, like
+"vitest related --run src/a.ts src/b.ts". A deleted or renamed file, a
+file matching one of its "fullOn" globs, or more than 200 files runs the
+full command. --full runs the full command anyway. The status line says
+"narrowed to 2 files since run 01K...".
+
 A failed or timed-out check whose log a parser reads prints its
 diagnostics, at most 20, as "file:line:col rule message" lines before a
 10-line log tail, in run, results, and follow; --json prints them as
@@ -184,6 +193,7 @@ async function main(argv: string[]): Promise<number> {
         failed: { type: "boolean", default: false },
         new: { type: "boolean", default: false },
         "no-cache": { type: "boolean", default: false },
+        full: { type: "boolean", default: false },
         write: { type: "boolean", default: false },
         force: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
@@ -227,6 +237,9 @@ async function main(argv: string[]): Promise<number> {
   if (values["no-cache"] && command !== "run") {
     throw new AgentError("--no-cache belongs to run", "run `firstlight run --no-cache`");
   }
+  if (values.full && command !== "run") {
+    throw new AgentError("--full belongs to run", "run `firstlight run --full`");
+  }
   if (values.write && command !== "init") {
     throw new AgentError("--write belongs to init", "run `firstlight init --write`");
   }
@@ -251,7 +264,7 @@ async function main(argv: string[]): Promise<number> {
   };
   switch (command) {
     case "run":
-      return runCommand(ctx, values.failed ? "failed" : { names, commands }, !values["no-cache"]);
+      return runCommand(ctx, values.failed ? "failed" : { names, commands }, !values["no-cache"], !values.full);
     case "results":
       return resultsCommand(ctx, values.wait, values.new);
     case "follow":
@@ -265,7 +278,7 @@ async function main(argv: string[]): Promise<number> {
 
 type Selection = "failed" | { names: string[]; commands: string[] };
 
-async function runCommand(ctx: Context, selection: Selection, useCache: boolean): Promise<number> {
+async function runCommand(ctx: Context, selection: Selection, useCache: boolean, narrow: boolean): Promise<number> {
   const previous = ctx.state.currentId();
   let checks: CheckSpec[];
   let notRun: string[] = [];
@@ -298,7 +311,8 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
   const tree = treeKey(ctx.state.root);
   const keys = tree === null ? new Map<string, string>() : cacheKeys(checks, tree);
   const reused = useCache ? ctx.state.reusable(keys) : new Map();
-  const run = ctx.state.createRun(checks, keys, reused);
+  const narrowed = tree === null || !narrow ? new Map<string, Narrowing>() : narrowChecks(ctx, checks, tree, keys, reused, useCache);
+  const run = ctx.state.createRun(checks, keys, reused, tree, narrowed);
   const runDir = ctx.state.runDir(run.id);
   // The supervisor has no terminal; its own stderr goes to a file so a
   // crash of firstlight itself is still visible after the fact.
@@ -345,6 +359,36 @@ async function runCommand(ctx: Context, selection: Selection, useCache: boolean)
     }
     await sleep(POLL_MS);
   }
+}
+
+// A check with `affected` that has no result to reuse runs only what the
+// files changed since its newest full pass reach. Its key then names the
+// narrowed command, so the narrowed pass is never mistaken for a full one,
+// and running again on the same tree reuses it like any other result.
+function narrowChecks(
+  ctx: Context,
+  checks: readonly CheckSpec[],
+  tree: string,
+  keys: Map<string, string>,
+  reused: Map<string, Reuse>,
+  useCache: boolean,
+): Map<string, Narrowing> {
+  const narrowed = new Map<string, Narrowing>();
+  for (const check of checks) {
+    if (check.affected === undefined || reused.has(check.name)) continue;
+    const base = ctx.state.narrowBase(check);
+    if (base === null) continue;
+    const output = changedPaths(ctx.state.root, base.tree, tree);
+    const plan = planNarrowing(check.affected, check.fullOn ?? [], output === null ? null : parseNameStatus(output));
+    if ("full" in plan) continue;
+    const key = cacheKey(tree, plan.command, check.after.map((dep) => keys.get(dep)!));
+    keys.set(check.name, key);
+    narrowed.set(check.name, { base: base.run, files: plan.files, command: plan.command });
+    if (!useCache) continue;
+    const reuse = ctx.state.reusable(new Map([[check.name, key]])).get(check.name);
+    if (reuse !== undefined) reused.set(check.name, reuse);
+  }
+  return narrowed;
 }
 
 function failedChecks(ctx: Context, previous: string, configured: CheckSpec[]): CheckSpec[] {

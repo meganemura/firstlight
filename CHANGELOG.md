@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A check can run only what the changed files reach. `affected` in `firstlight.json` is a command with `{files}`, like `vitest related --run --passWithNoTests {files}`. Once the check passed in full, `firstlight run` puts the files changed since that pass in place of `{files}` and runs that command: `test passed (narrowed to 2 files since run 01K..., 3.1s)`. A deleted or renamed file, a file that matches `fullOn`, more than 200 files, or `run --full` runs the full command. `run.json` records the tree key and each narrowing, and the `--json` check line gains `narrowed`. The README section is "Narrowing to changed files".
+
 - A failure is reused like a pass once it has repeated: when two runs that really ran a check on the same working tree with the same command both failed, and no run on that tree passed it, `firstlight run` reports the failure with that run's log instead of running the check a third time: `test failed (cached from run 01K..., 10.4s originally)`, and the log ends with a line that says how to run it anyway (`--no-cache`). The first run again after a failure still runs, so a failure from outside the tree, or a flaky one, still gets its second chance. Coding agents often run an unchanged failing test again; this stops the third and later runs. `run.json`'s `reused` entries gain `status`, `exit_code`, and, for a failure, `log`. The README section is now "Reused results".
 
 ## 0.3.0 (2026-10-16)

@@ -128,7 +128,7 @@ class Supervisor {
     try {
       // detached gives the check its own process group, so one signal to
       // -pid reaches everything the shell started.
-      child = spawn("/bin/sh", ["-c", check.run], {
+      child = spawn("/bin/sh", ["-c", this.run.narrowed?.[check.name]?.command ?? check.run], {
         cwd: this.run.root,
         detached: true,
         stdio: ["ignore", fd, fd],

@@ -118,6 +118,8 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, c
     overdue: checkEta.overdue,
     cached_from: view.cached_from,
   };
+  const narrowing = snapshot.run.narrowed?.[view.name];
+  if (narrowing !== undefined) line.narrowed = narrowing;
   if (view.orphan) line.orphan = true;
   if (compared !== undefined) {
     line.new = compared.comparison?.isNew ?? false;
@@ -311,10 +313,14 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
   } else if (view.cached_from !== null) {
     details.push(`cached from run ${view.cached_from}`);
     if (view.elapsed_ms !== null) details.push(`${(view.elapsed_ms / 1000).toFixed(1)}s originally`);
+    const narrowing = snapshot.run.narrowed?.[view.name];
+    if (narrowing !== undefined) details.push(narrowedText(narrowing.files.length, narrowing.base));
   } else if (view.status === "skipped") {
     const spec = snapshot.run.checks.find((check) => check.name === view.name);
     details.push(`needs ${spec?.after.join(", ") ?? "?"}`);
   } else {
+    const narrowing = snapshot.run.narrowed?.[view.name];
+    if (narrowing !== undefined) details.push(narrowedText(narrowing.files.length, narrowing.base));
     if (view.exit_code !== null) details.push(`exit ${view.exit_code}`);
     const elapsed =
       view.elapsed_ms ?? (view.status === "running" && view.started_at !== null ? Date.now() - Date.parse(view.started_at) : null);
@@ -328,6 +334,10 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
     }
   }
   return details.length === 0 ? `${view.name} ${view.status}` : `${view.name} ${view.status} (${details.join(", ")})`;
+}
+
+function narrowedText(count: number, base: string): string {
+  return `narrowed to ${count} ${plural(count, "file")} since run ${base}`;
 }
 
 function countsLine(snapshot: RunSnapshot, eta: RunEta): string {

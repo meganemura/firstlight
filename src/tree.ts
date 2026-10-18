@@ -59,3 +59,25 @@ export function treeKey(root: string): string | null {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// The changes between two tree keys, as `git diff --name-status -z` prints
+// them, or null when git cannot say: a tree written long ago may be gone
+// after `git gc`, and then the caller runs the full check.
+export function changedPaths(root: string, from: string, to: string): string | null {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  try {
+    return execFileSync("git", ["diff", "--name-status", "-z", "--no-renames", from, to], {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}

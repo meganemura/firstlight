@@ -131,6 +131,8 @@ node src/cli.ts --help
 | `after` | Checks that must pass before this one starts. If one of them does not pass, this check is `skipped`. |
 | `timeoutSec` | Seconds before firstlight stops the check and records `timed_out`. The default is 600. |
 | `parser` | How to read the check's log when it fails: `tsc`, `vitest`, `node-test`, or `archstrict`, or a list of them, like `["tsc", "vitest"]`, read in order. Without it, firstlight infers the parser from `run`. `none` turns diagnostics off for this check. See [Diagnostics](#diagnostics). |
+| `affected` | A command that runs only the tests the changed files reach, with `{files}` where the file list goes, like `vitest related --run --passWithNoTests {files}`. See [Narrowing to changed files](#narrowing-to-changed-files). |
+| `fullOn` | Path globs whose change runs the full `run` command anyway, like `["package-lock.json", "vitest.config.ts"]`. `*` stays inside one directory and `**` crosses directories. It needs `affected`. |
 
 A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._:-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
@@ -366,6 +368,42 @@ The limits:
 - A directory that is not the root of a git repository has no tree key, and nothing is reused there. A git failure has the same effect.
 
 In these cases, run `firstlight run --no-cache`. It runs every selected check, and still records the keys, so a later run can reuse its passes.
+
+## Narrowing to changed files
+
+A check with `affected` runs only what the changed files reach, once it has passed in full:
+
+```json
+{
+  "checks": {
+    "test": {
+      "run": "vitest run",
+      "affected": "vitest related --run --passWithNoTests {files}",
+      "fullOn": ["package-lock.json", "vitest.config.ts", "test/helpers.ts"]
+    }
+  }
+}
+```
+
+`firstlight run` finds the newest kept run where the check ran its full `run` command and passed, and lists the files that changed between that run's tree and the current tree (`git diff --name-status`, tracked and untracked files). It puts the files, quoted for the shell, in place of `{files}` and runs that command instead:
+
+```text
+test passed (narrowed to 2 files since run 01K..., 3.1s)
+```
+
+The tool behind `affected` decides which tests a file reaches. firstlight only chooses when to narrow. It runs the full `run` command when:
+
+- the check never passed in full in a kept run;
+- no file changed since that pass;
+- a file was deleted or renamed, because no tool finds the tests of a path that no longer exists;
+- a changed file matches `fullOn`;
+- more than 200 files changed;
+- git could not list the changes;
+- `run --full` was given. `run --no-cache` still narrows; it only stops reuse.
+
+A narrowed run never becomes the base of a later narrowing, so the changes always count from a full pass, and a file that broke a test once is still in the list until the next full pass. The narrowed command is part of the cache key, so the same narrowing on the same tree is reused like any other result. In `--json`, the check line gets `narrowed`: `{ "base": "<run id>", "files": [...], "command": "..." }`, only when the check was narrowed.
+
+The limit is the tool's map from files to tests. `vitest related` follows the static import graph from each test file. A test that starts the code as a child process, or reads a file at run time, does not import it, so a change to that code reaches no test and the narrowed run passes with none. Use `affected` only where the tests import what they test, put the files that every test depends on in `fullOn`, and run `firstlight run --full` before a merge.
 
 ## CPU contention
 

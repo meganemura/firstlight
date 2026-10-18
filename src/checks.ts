@@ -55,6 +55,11 @@ export interface CheckSpec {
   // infer it; `run` records the outcome, a parser name, a list of them, or
   // null, in run.json.
   parser?: string | string[] | null;
+  // The command that runs only what the changed files reach, with
+  // `{files}` where they go, and the path globs whose change runs the full
+  // command anyway. See affected.ts.
+  affected?: string;
+  fullOn?: string[];
 }
 
 export interface CheckEvent {

@@ -8,6 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { FILES_PLACEHOLDER } from "./affected.ts";
 import type { CheckSpec, ReportedStatus } from "./checks.ts";
 import { inferParser, isParserChoice, PARSER_CHOICES, PARSERS } from "./diagnostics.ts";
 import { AgentError, messageOf } from "./errors.ts";
@@ -27,7 +28,7 @@ const CHECK_LIKE = new Set(["lint", "typecheck", "test", "check", "archstrict"])
 // command or a script glob. ":" is allowed so a check can keep the name of
 // the script it runs, like check:architecture.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
-const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser"]);
+const CHECK_KEYS = new Set(["run", "after", "timeoutSec", "parser", "affected", "fullOn"]);
 
 export interface Config {
   source: "firstlight.json" | "package.json";
@@ -90,7 +91,7 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
   if (!isRecord(value)) throw invalid(file, `check "${name}" must be an object`);
   for (const key of Object.keys(value)) {
     if (!CHECK_KEYS.has(key)) {
-      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are run, after, timeoutSec, parser`);
+      throw invalid(file, `check "${name}" has unknown key "${key}"; allowed keys are run, after, timeoutSec, parser, affected, fullOn`);
     }
   }
   if (typeof value.run !== "string" || value.run.trim().length === 0) {
@@ -110,14 +111,30 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
     }
     timeoutSec = value.timeoutSec;
   }
-  if (value.parser === undefined) return { name, run: value.run, after, timeoutSec };
-  if (!(value.parser === "none" || isParserChoice(value.parser))) {
-    throw invalid(
-      file,
-      `check "${name}" has "parser" ${JSON.stringify(value.parser)}; allowed values are ${PARSER_CHOICES.join(", ")}, or a list of ${PARSERS.join(", ")}`,
-    );
+  const spec: CheckSpec = { name, run: value.run, after, timeoutSec };
+  if (value.parser !== undefined) {
+    if (!(value.parser === "none" || isParserChoice(value.parser))) {
+      throw invalid(
+        file,
+        `check "${name}" has "parser" ${JSON.stringify(value.parser)}; allowed values are ${PARSER_CHOICES.join(", ")}, or a list of ${PARSERS.join(", ")}`,
+      );
+    }
+    spec.parser = value.parser;
   }
-  return { name, run: value.run, after, timeoutSec, parser: value.parser };
+  if (value.affected !== undefined) {
+    if (typeof value.affected !== "string" || !value.affected.includes(FILES_PLACEHOLDER)) {
+      throw invalid(file, `check "${name}" has "affected" that is not a shell command holding ${FILES_PLACEHOLDER}, like "vitest related --run ${FILES_PLACEHOLDER}"`);
+    }
+    spec.affected = value.affected;
+  }
+  if (value.fullOn !== undefined) {
+    if (!Array.isArray(value.fullOn) || !value.fullOn.every((glob) => typeof glob === "string" && glob.length > 0)) {
+      throw invalid(file, `check "${name}" has "fullOn" that is not an array of path globs`);
+    }
+    if (spec.affected === undefined) throw invalid(file, `check "${name}" has "fullOn" without "affected"`);
+    spec.fullOn = value.fullOn as string[];
+  }
+  return spec;
 }
 
 function validateGraph(checks: CheckSpec[], file: string): void {
