@@ -54,7 +54,7 @@ export interface RunRecord {
   // Absent in a run written before the cache existed, and empty when the
   // root had no tree key: such a run is never a cache source.
   cache_keys?: Record<string, string>;
-  // The passes the CLI chose to reuse; the supervisor records them as
+  // The results the CLI chose to reuse; the supervisor records them as
   // events, so it stays the only writer of events.jsonl.
   reused?: Record<string, Reuse>;
 }
@@ -232,7 +232,22 @@ export class RepoState {
       keys: files.record.cache_keys ?? {},
       states: files.states,
     }));
-    return findReuse(cacheKeys, past);
+    const found = findReuse(cacheKeys, past);
+    for (const [name, reuse] of found) {
+      if (reuse.status !== "failed") continue;
+      const origin = past.find((run) => run.id === reuse.run);
+      if (origin === undefined) {
+        found.delete(name);
+        continue;
+      }
+      // The origin ran the check under its own name there, which may differ.
+      const originName = origin.states.find((state) => origin.keys[state.name] === cacheKeys.get(name))?.name ?? name;
+      const record = this.readRun(origin.id);
+      const log = logPaths(this.runDir(origin.id), record.checks).get(originName);
+      if (log === undefined) found.delete(name);
+      else found.set(name, { ...reuse, log });
+    }
+    return found;
   }
 
   // Newest first. Only the kept runs are read, so the history costs no file
@@ -425,7 +440,13 @@ function isReuseRecord(value: unknown): value is Record<string, Reuse> {
   return (
     isRecord(value) &&
     Object.values(value).every(
-      (entry) => isRecord(entry) && typeof entry.run === "string" && typeof entry.elapsed_ms === "number",
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.run === "string" &&
+        typeof entry.elapsed_ms === "number" &&
+        (entry.status === undefined || entry.status === "passed" || entry.status === "failed") &&
+        (entry.exit_code === undefined || Number.isInteger(entry.exit_code)) &&
+        (entry.log === undefined || typeof entry.log === "string"),
     )
   );
 }

@@ -71,7 +71,7 @@ test("a pass on an unchanged tree is reused without running, and an edit runs it
   assert.equal(count(`${marks}/test`), 2);
 });
 
-test("a failing check is never reused, and --no-cache runs a passing one anyway", async () => {
+test("a failing check runs again once, and --no-cache runs a passing one anyway", async () => {
   const marks = markerDir();
   const repo = repoWith({
     good: { run: `echo ran >> ${marks}/good` },
@@ -97,6 +97,54 @@ test("a failing check is never reused, and --no-cache runs a passing one anyway"
   const after = await cli(repo, ["run", "--json", "good"]);
   assert.equal(parseLines(after.stdout)[0]!.cached_from, forcedId, "a --no-cache run still records keys a later run reuses");
   assert.equal(count(`${marks}/good`), 2);
+});
+
+test("a failure that repeated on an unchanged tree is reused with its log until the tree changes or --no-cache", async () => {
+  const marks = markerDir();
+  const repo = repoWith({ bad: { run: `echo ran >> ${marks}/bad; echo "expected 2, got 3"; exit 3` } });
+
+  assert.equal((await cli(repo, ["run"])).code, 1);
+  assert.equal((await cli(repo, ["run"])).code, 1);
+  assert.equal(count(`${marks}/bad`), 2);
+  const origin = currentRun(repo).id;
+
+  const third = await cli(repo, ["run"]);
+  assert.equal(third.code, 1, third.stderr);
+  assert.equal(count(`${marks}/bad`), 2);
+  assert.match(third.stdout, new RegExp(`^bad failed \\(cached from run ${origin}, \\d+\\.\\ds originally\\)\\n`));
+  assert.match(third.stdout, /expected 2, got 3\n/);
+  assert.match(third.stdout, new RegExp(`not run; failed in run ${origin} on the same working tree`));
+  assert.match(third.stdout, /: 1 failed \(1 cached\)\n/);
+
+  const json = await cli(repo, ["results", "--json"]);
+  const [check] = parseLines(json.stdout);
+  assert.deepEqual([check!.status, check!.exit_code, check!.cached_from], ["failed", 3, origin]);
+
+  const failed = await cli(repo, ["run", "--failed", "--json"]);
+  assert.equal(parseLines(failed.stdout)[0]!.cached_from, origin, "a reuse of a reused failure names the run that ran it");
+  assert.equal(count(`${marks}/bad`), 2);
+
+  assert.equal((await cli(repo, ["run", "--no-cache"])).code, 1);
+  assert.equal(count(`${marks}/bad`), 3);
+
+  writeFileSync(path.join(repo.root, "src.txt"), "two\n");
+  assert.equal((await cli(repo, ["run"])).code, 1);
+  assert.equal(count(`${marks}/bad`), 4);
+});
+
+test("a check that passed once on a tree is never reported as a reused failure there", async () => {
+  const marks = markerDir();
+  const repo = repoWith({ flaky: { run: `echo ran >> ${marks}/flaky; test -f ${marks}/pass` } });
+
+  writeFileSync(`${marks}/pass`, "");
+  assert.equal((await cli(repo, ["run"])).code, 0);
+  rmSync(`${marks}/pass`);
+  assert.equal((await cli(repo, ["run", "--no-cache"])).code, 1);
+  assert.equal((await cli(repo, ["run", "--no-cache"])).code, 1);
+  const again = await cli(repo, ["run", "--json"]);
+  assert.equal(again.code, 0, again.stderr);
+  assert.notEqual(parseLines(again.stdout)[0]!.cached_from, null);
+  assert.equal(count(`${marks}/flaky`), 3);
 });
 
 test("a check is reused only while its command and the keys of its after checks are unchanged", async () => {

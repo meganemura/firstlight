@@ -4,9 +4,9 @@
 // describe a path the machine does not allow. This module does no I/O.
 //
 // A result reused from an earlier run is the one step outside the table:
-// `passed` straight from `pending`, legal only on an event that names the
-// run it came from. Widening the table instead would let any check pass
-// without ever running.
+// `passed` or `failed` straight from `pending`, legal only on an event that
+// names the run it came from. Widening the table instead would let any
+// check pass without ever running.
 
 export type CheckStatus =
   | "pending"
@@ -42,7 +42,7 @@ export function canAdvance(from: CheckStatus, to: CheckStatus): boolean {
 }
 
 export function canApply(from: CheckStatus, event: Pick<CheckEvent, "status" | "cached_from">): boolean {
-  if (event.cached_from !== undefined) return from === "pending" && event.status === "passed";
+  if (event.cached_from !== undefined) return from === "pending" && (event.status === "passed" || event.status === "failed");
   return canAdvance(from, event.status);
 }
 

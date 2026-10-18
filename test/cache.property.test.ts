@@ -1,6 +1,7 @@
 // Properties of cache keys and reuse: a key is a function of the tree, the
 // command, and the dependency keys, and changes when any one of them does;
-// a key flows into every check that is after it; and only a pass is reused.
+// a key flows into every check that is after it; and a pass is reused at
+// once, a failure only after it repeated on the same key with no pass.
 
 import assert from "node:assert/strict";
 import * as hegel from "@hegeldev/hegel";
@@ -67,31 +68,44 @@ test("changing one command changes the key of that check and of every check afte
   );
 });
 
-test("only a passed result is reused, from the newest run that has one, and a reuse keeps its origin", () => {
+test("the newest pass is reused; a failure only after it repeated with no pass; a reuse keeps its origin", () => {
   hegel.test(
     (tc) => {
-      const runCount = tc.draw(gs.integers({ minValue: 0, maxValue: 5 }));
+      const runCount = tc.draw(gs.integers({ minValue: 0, maxValue: 6 }));
       const past: PastCacheRun[] = Array.from({ length: runCount }, (_, i) => {
         const status = tc.draw(gs.sampledFrom(CHECK_STATUSES));
         const key = tc.draw(gs.sampledFrom(["k1", "k2"]));
-        const cachedFrom = status === "passed" && tc.draw(gs.booleans()) ? `origin${i}` : null;
+        const exitCode = status === "failed" ? tc.draw(gs.sampledFrom([null, 1, 2])) : status === "passed" ? 0 : null;
+        const reusable = status === "passed" || (status === "failed" && exitCode !== null);
+        const cachedFrom = reusable && tc.draw(gs.booleans()) ? `origin${i}` : null;
         return {
           id: `run${i}`,
           keys: { c: key },
-          states: [{ ...initialState("c"), status, elapsed_ms: 100 + i, cached_from: cachedFrom }],
+          states: [{ ...initialState("c"), status, exit_code: exitCode, elapsed_ms: 100 + i, cached_from: cachedFrom }],
         };
       });
-      const found = findReuse(new Map([["c", "k1"]]), past);
-      const source = past.find((run) => run.keys.c === "k1" && run.states[0]!.status === "passed");
-      if (source === undefined) {
-        assert.equal(found.size, 0);
-      } else {
-        assert.deepEqual(found.get("c"), {
-          run: source.states[0]!.cached_from ?? source.id,
-          elapsed_ms: source.states[0]!.elapsed_ms,
-        });
+      const found = findReuse(new Map([["c", "k1"]]), past).get("c");
+      const decided = past.filter(
+        (run) => run.keys.c === "k1" && (run.states[0]!.status === "passed" || (run.states[0]!.status === "failed" && run.states[0]!.exit_code !== null)),
+      );
+      const pass = decided.find((run) => run.states[0]!.status === "passed");
+      if (pass !== undefined) {
+        assert.deepEqual(found, { run: pass.states[0]!.cached_from ?? pass.id, elapsed_ms: pass.states[0]!.elapsed_ms, status: "passed" });
+        return;
       }
+      if (found === undefined) {
+        const newest = decided[0];
+        assert.ok(
+          newest === undefined || (newest.states[0]!.cached_from === null && decided.filter((run) => run.states[0]!.cached_from === null).length < 2),
+          "a failure that repeated was not reused",
+        );
+        return;
+      }
+      assert.equal(found.status, "failed");
+      const newest = decided[0]!;
+      assert.equal(found.run, newest.states[0]!.cached_from ?? newest.id);
+      assert.equal(found.exit_code, newest.states[0]!.exit_code);
     },
-    { testCases: 300 },
+    { testCases: 400 },
   );
 });

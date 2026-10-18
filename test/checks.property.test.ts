@@ -102,16 +102,16 @@ test("an event for a check the run does not have is rejected", () => {
   );
 });
 
-test("a reused result is legal only as passed straight from pending", () => {
+test("a reused result is legal only as passed or failed straight from pending", () => {
   hegel.test(
     (tc) => {
       const from = tc.draw(gs.sampledFrom(CHECK_STATUSES));
       const to = tc.draw(gs.sampledFrom(CHECK_STATUSES));
       const reused: CheckEvent = { ...event("c", to), cached_from: "01K0000000000000000000000" };
       const events = [...pathTo(from).map((status) => event("c", status)), reused];
-      if (from === "pending" && to === "passed") {
+      if (from === "pending" && (to === "passed" || to === "failed")) {
         const [state] = foldEvents(["c"], events).checks;
-        assert.equal(state!.status, "passed");
+        assert.equal(state!.status, to);
         assert.equal(state!.cached_from, reused.cached_from);
         assert.equal(state!.started_at, null);
       } else {

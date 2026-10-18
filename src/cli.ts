@@ -115,7 +115,10 @@ untracked files, not ignored ones) with the same command, and whose
 "after" checks did the same, is not run again: "test passed (cached from
 run 01K..., 10.4s originally)". Environment variables and files outside
 the repository are not part of that comparison; --no-cache runs every
-check anyway. Only a pass is reused, and only in a git repository.
+check anyway. A failure is reused the same way once it has failed twice
+on that tree with that command and never passed there: "test failed
+(cached from run 01K..., 10.4s originally)", with that run's log. Only in
+a git repository.
 
 A failed or timed-out check whose log a parser reads prints its
 diagnostics, at most 20, as "file:line:col rule message" lines before a

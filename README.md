@@ -192,7 +192,7 @@ firstlight init [script|pattern...] [--write [--force]] [--cwd DIR] [--json]
 firstlight --help
 ```
 
-- `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree is reused instead of run; see [Reused passes](#reused-passes). `--no-cache` runs every selected check.
+- `run` stops the previous run if it is still going, starts the checks, and returns at the first `failed` or `timed_out` check, or when every check is done. A check that already passed on the same working tree, or failed there twice, is reused instead of run; see [Reused results](#reused-results). `--no-cache` runs every selected check.
 - `run --failed` runs only the checks that did not pass in the latest run; see [Running what failed](#running-what-failed).
 - `results` reports the latest run: status, exit code, elapsed time, and for `failed` and `timed_out` checks the diagnostics, the log path, and the last 40 log lines (10 when there are diagnostics). `--wait` blocks until every check is done. `--new` reports only the failures the previous run did not have; see [Only new failures](#only-new-failures).
 - `follow` prints the status changes of the latest run as they happen; see [Following a run](#following-a-run).
@@ -328,7 +328,7 @@ In `--json`, the diagnostic line gets `evidence` (the absolute path) and `rerun`
 
 firstlight matches by the test file and the full test name in depug's rerun command, against the file and the name in vitest's `FAIL` header. vitest joins the names with ` > ` and depug with a space, so two tests can look the same (`a > b c` and `a b > c`). When two failed tests, or two depug failures, have the same file and name, or when depug printed nothing for a test, firstlight attaches nothing to it. A log without depug lines gives the same diagnostics as before. This applies everywhere diagnostics show: `run`, `results`, `results --new`, and `follow`.
 
-## Reused passes
+## Reused results
 
 When a check already passed in a kept run on the same working tree, with the same command, `firstlight run` does not run it again. It reports the earlier pass:
 
@@ -338,6 +338,16 @@ test passed (cached from run 01K..., 10.4s originally)
 
 If every selected check is reused, `run` starts no check and exits 0 at once: `passed 4 checks in 0.2s (4 cached, run 01K...)`. A check that is `after` a reused check starts right away. This saves the slow checks when an agent runs again after changing nothing, or after a failure in a different check.
 
+A failure is reused too, once it has repeated: when two runs that really ran the check on the same key both failed, and no run on that key passed, the next run reports the failure with the log of the run that had it, and does not run the check:
+
+```text
+test failed (cached from run 01K..., 10.4s originally)
+...the last lines of that run's log...
+firstlight: not run; failed in run 01K... on the same working tree with the same command. Change something, or run it again with --no-cache if the failure came from outside the tree or may be flaky
+```
+
+The first run again after a failure still runs the check, because a failure can come from outside the tree, like a service that was down or a flaky test, and that run is how an agent finds out. A third run of the same failure on the same tree only repeats what the agent already knows. Coding agents do this often: in a 2026 study of 1,200 agent sessions, running unchanged tests again was one of three wasteful habits found in most tasks ([arXiv:2609.30725](https://arxiv.org/abs/2609.30725)). A failure counts only when the command itself exited non-zero; a check that could not start, timed out, or was cancelled is never reused. A check that passed once on a key never gets a reused failure on that key.
+
 firstlight compares a cache key. The key of a check is the SHA-256 of:
 
 - the tree key: the git tree hash of the working tree, tracked and untracked files, without ignored files. firstlight computes it with `git add -A` and `git write-tree` against a temporary index of its own, so the real index, the staged changes, and the refs do not change. The blobs of changed files go into the object store as loose objects, which `git gc` removes later like any other unreferenced object;
@@ -346,7 +356,7 @@ firstlight compares a cache key. The key of a check is the SHA-256 of:
 
 The name of a check and its `timeoutSec` are not part of the key. `firstlight.json` is part of the tree unless it is ignored, so an edit to it runs every check again.
 
-Only a `passed` result is reused. A `failed`, `timed_out`, `cancelled`, `skipped`, or `unknown` check runs again. firstlight finds a pass in the kept runs, newest first, so a pruned run stops being a source. A pass that was itself reused names the run that really ran the check, with that run's time, so a chain of unchanged runs keeps one origin.
+A `timed_out`, `cancelled`, `skipped`, or `unknown` check runs again. firstlight finds a result in the kept runs, newest first, so a pruned run stops being a source. A result that was itself reused names the run that really ran the check, with that run's time, so a chain of unchanged runs keeps one origin.
 
 The limits:
 

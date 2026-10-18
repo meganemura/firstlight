@@ -1,7 +1,7 @@
 // The per-run supervisor: a detached process that starts each check when
 // its `after` checks have passed, waits on it, enforces its timeout, and
 // appends every status change to events.jsonl. It is the only writer of
-// that file, so it also records the passes the CLI chose to reuse, before
+// that file, so it also records the results the CLI chose to reuse, before
 // it starts anything, and their dependents start at once. It exits when every check is terminal, or after SIGTERM once
 // it has cancelled what was left. It prints nothing; the CLI reads the file.
 
@@ -64,12 +64,26 @@ class Supervisor {
     for (const check of this.run.checks) {
       const reuse = this.run.reused?.[check.name];
       if (reuse === undefined) continue;
+      const log = this.logs.get(check.name)!;
+      if (reuse.status === "failed") {
+        // The earlier output is copied so the tail and the diagnostics read
+        // as they did; the note goes last, where the tail shows it.
+        let earlier = "";
+        try {
+          earlier = readFileSync(reuse.log!, "utf8");
+        } catch {
+          earlier = "firstlight: the log of that run is gone\n";
+        }
+        writeFileSync(
+          log,
+          `${earlier}${earlier.endsWith("\n") || earlier === "" ? "" : "\n"}firstlight: not run; failed in run ${reuse.run} on the same working tree with the same command. Change something, or run it again with --no-cache if the failure came from outside the tree or may be flaky\n`,
+        );
+        this.record(check.name, "failed", { exit_code: reuse.exit_code!, elapsed_ms: reuse.elapsed_ms, cached_from: reuse.run });
+        continue;
+      }
       // The log is written so its path in the output points at something
       // that says why this run has no output of its own.
-      writeFileSync(
-        this.logs.get(check.name)!,
-        `firstlight: not run; passed in run ${reuse.run} on the same working tree with the same command\n`,
-      );
+      writeFileSync(log, `firstlight: not run; passed in run ${reuse.run} on the same working tree with the same command\n`);
       this.record(check.name, "passed", { exit_code: 0, elapsed_ms: reuse.elapsed_ms, cached_from: reuse.run });
     }
     this.schedule();

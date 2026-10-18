@@ -1,5 +1,5 @@
-// Cache keys for checks and the lookup of a pass that an earlier run
-// already proved. A key names exactly what a pass depends on as far as
+// Cache keys for checks and the lookup of a result that an earlier run
+// already decided. A key names exactly what a pass depends on as far as
 // firstlight can see: the working tree, the check's command, and the keys
 // of its `after` checks. Computing the tree key is tree.ts's, and reading
 // earlier runs is the store's. No I/O.
@@ -48,21 +48,51 @@ export interface PastCacheRun {
 export interface Reuse {
   run: string;
   elapsed_ms: number;
+  // Absent in a run written before failures were reused: that was a pass.
+  status?: "passed" | "failed";
+  exit_code?: number;
+  // The log of the run that ran a reused failure, which the new run copies.
+  log?: string;
 }
 
-// Only a pass is reused: a failure may be flaky, and a timed-out, cancelled,
-// skipped, or unknown check proved nothing. A pass that was itself reused
-// points at the run that really ran the check, so a chain of unchanged runs
-// keeps one origin and its real duration.
+// The newest pass on the same key is reused. A failure is reused only once
+// it has repeated: two runs that really ran the check on the same key
+// failed, and no run on that key passed. The first run again after a failure still
+// runs, because a failure can come from outside the tree (a service that
+// was down, a flaky test) and that run is how an agent finds out; a third
+// run of the same failure on the same tree only costs the time to learn
+// what it already knows. A failure is decided only when the command itself
+// exited non-zero; one that never started, timed out, was cancelled,
+// skipped, or unknown proved nothing. A result that was itself reused
+// points at the run that really ran the check, so a chain of unchanged
+// runs keeps one origin and its real duration.
 export function findReuse(keys: ReadonlyMap<string, string>, newestFirst: readonly PastCacheRun[]): Map<string, Reuse> {
   const found = new Map<string, Reuse>();
   for (const [name, key] of keys) {
-    for (const past of newestFirst) {
-      const state = past.states.find((candidate) => past.keys[candidate.name] === key && candidate.status === "passed");
-      if (state === undefined) continue;
-      found.set(name, { run: state.cached_from ?? past.id, elapsed_ms: state.elapsed_ms ?? 0 });
-      break;
+    const decided = newestFirst.flatMap((past) => {
+      const state = past.states.find((candidate) => past.keys[candidate.name] === key && isDecided(candidate));
+      return state === undefined ? [] : [{ id: past.id, state }];
+    });
+    const pass = decided.find((entry) => entry.state.status === "passed");
+    if (pass !== undefined) {
+      found.set(name, { run: pass.state.cached_from ?? pass.id, elapsed_ms: pass.state.elapsed_ms ?? 0, status: "passed" });
+      continue;
+    }
+    const newest = decided[0];
+    if (newest === undefined) continue;
+    const ranAndFailed = decided.filter((entry) => entry.state.cached_from === null).length;
+    if (newest.state.cached_from !== null || ranAndFailed >= 2) {
+      found.set(name, {
+        run: newest.state.cached_from ?? newest.id,
+        elapsed_ms: newest.state.elapsed_ms ?? 0,
+        status: "failed",
+        exit_code: newest.state.exit_code!,
+      });
     }
   }
   return found;
+}
+
+function isDecided(state: CheckState): boolean {
+  return state.status === "passed" || (state.status === "failed" && state.exit_code !== null && state.exit_code !== 0);
 }

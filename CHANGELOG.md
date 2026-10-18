@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A failure is reused like a pass once it has repeated: when two runs that really ran a check on the same working tree with the same command both failed, and no run on that tree passed it, `firstlight run` reports the failure with that run's log instead of running the check a third time: `test failed (cached from run 01K..., 10.4s originally)`, and the log ends with a line that says how to run it anyway (`--no-cache`). The first run again after a failure still runs, so a failure from outside the tree, or a flaky one, still gets its second chance. Coding agents often run an unchanged failing test again; this stops the third and later runs. `run.json`'s `reused` entries gain `status`, `exit_code`, and, for a failure, `log`. The README section is now "Reused results".
+
 ## 0.3.0 (2026-10-16)
 
 - A version bump that lands on `main` now publishes the package: `publish.yml` runs on a push to `main` that changes `package.json`, releases nothing when the `v<version>` tag already exists, and after `npm publish` creates that tag and the GitHub release on the published commit. Nobody pushes a release tag by hand.
