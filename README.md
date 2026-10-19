@@ -509,6 +509,53 @@ Each selected test's id is its path relative to the repository root, and its `re
 
 **Limits.** The vitest config, `globalSetup` files, and any other code that runs outside a test file's worker are not recorded: put them in `fullOn`. A new source file that a test loads by listing a directory, not by an import, selects nothing until a file that loads it changes. A process killed by a signal writes no coverage. A test whose inputs change from run to run, such as a property test, can run a function in one run and not in the next, and the selection follows the run that was recorded: two recordings of this repository's suite differed in 1 to 6 of about 3,580 pairs of a test file and a function it ran, all in one property test file. `--always '**/*.property.test.ts'` runs such tests on every change. Run `firstlight run --full` before a merge.
 
+### Measured on this repository
+
+These numbers come from this repository's own suite of 32 test files. They were measured on a 4-CPU machine with 15 GB of memory, Node 24.22.0, and vitest 4.1.11, with two vitest workers and no other job running. The scripts are in `scripts/` and read the test check of `firstlight.json`, so they measure the selection that firstlight runs.
+
+**Safety.** Each mutant that Stryker killed is a bug that a test caught. `scripts/selector-safety.mjs` gives the selector a change at exactly the lines of each such mutant and checks that the selection holds the test file that killed it. The recording comes from the full suite at the same tree. Stryker's run over `src/` (the `mutate` list in `stryker.config.json`) killed 2,198 mutants:
+
+- The selection held the killing test file for every mutant: 0 misses.
+- The 4 mutants in `src/node/layout.ts` got the full run, because `fullOn` names that file.
+- A narrowed selection held 7.7 of the 32 test files on average.
+
+Stryker stops at the first test that kills a mutant, so each mutant has one killing test. A selection without it could still hold another test that kills the mutant, so this count of misses can only be too high.
+
+Stryker cannot measure `src/cli.ts` and `src/supervisor.ts`, because the tests reach them only through child processes, which never see Stryker's active mutant. `scripts/selector-children.mjs` draws a seeded sample from Stryker's 936 mutants of those files and of the selector's bin and recorder. It applies each mutant in a temporary git worktree, runs the selected test files, and runs the whole suite when they pass. In 40 mutants drawn with seed 1, all of them in `src/cli.ts` and `src/supervisor.ts`:
+
+- The selected files caught 32.
+- The whole suite caught none of the other 8, so no test could have caught them.
+- No mutant was caught by the whole suite and missed by the selection.
+- The selection held 10.9 of the 32 test files on average.
+
+**Cost.** `scripts/selector-history.mjs` replays this repository's commits. For each commit that changes code, it records the full suite at the parent commit and asks the selector about the commit's changes. Of 24 such commits, 14 were narrowed, to a median of 70% and a mean of 62% of the test files. 10 ran in full: 6 changed a file that `fullOn` names (`package-lock.json`, `vitest.config.ts`, `test/helpers.ts`, `src/node/layout.ts`), and 4 changed a file that is not code, such as a test fixture.
+
+The four newest narrowed commits were timed, three runs each, as medians in seconds. The one-minute load average was between 2.4 and 4.0 during these runs, from the runs themselves:
+
+| Commit | Selected | Full suite | Full suite, recording | Selected tests |
+| --- | --- | --- | --- | --- |
+| 56f5a94 | 25 of 29 | 46.3 | 53.6 | 45.6 |
+| 06fe7b1 | 19 of 27 | 43.8 | 50.9 | 43.1 |
+| 5ab251f | 24 of 27 | 41.0 | 47.6 | 40.2 |
+| c1c10c9 | 1 of 32 | 53.9 | 62.4 | 3.9 |
+
+The slowest test files set the time. `test/new.test.ts` (21 seconds in a full run), `test/cache.test.ts` (13), and `test/run.test.ts` (12) start the CLI as a child process, and the CLI runs code from most of `src/`. A change that reaches the CLI selects them, so a narrowed run of 19 to 25 files takes almost as long as the full run. A change that reaches only the pure modules, the selector, or no code at all saves most of the time: c1c10c9 changed only `scripts/`, and only `test/pack.test.ts` ran, through `--always`.
+
+**Recording.** The full suite with the recorder on took 16% longer at each of the four commits, 6.6 to 8.5 seconds. A recording of the full suite wrote 451 raw coverage files, 129 MB in all: one for each test file's worker and one for each Node process that a test started. The first selection turned them into a map of 64 KB.
+
+To run the measurements again (Stryker writes `reports/mutation/mutation.json`, so run the two Stryker steps one at a time):
+
+```sh
+FIRSTLIGHT_RECORD=/tmp/record npx vitest run --maxWorkers=2
+npx stryker run --concurrency 2 --reporters json,clear-text
+node scripts/selector-safety.mjs /tmp/record reports/mutation/mutation.json
+npx stryker run --concurrency 2 --mutate src/cli.ts,src/supervisor.ts,src/node/cli.ts,src/node/vitest-setup.ts --ignoreStatic --reporters json
+node scripts/selector-children.mjs /tmp/record reports/mutation/mutation.json --sample 40 --seed 1
+node scripts/selector-history.mjs --time 4 --repeat 3
+```
+
+On that machine, the first Stryker run took 14 minutes, the sample of 40 mutants 31 minutes, and the history replay 37 minutes. `selector-children.mjs` reads `/proc` to find the processes a mutant leaves behind, so it runs on Linux only.
+
 ## CPU contention
 
 firstlight starts every check at once and has no concurrency limit. Test runners such as vitest and `node --test` already spread one check over every core, so checks that run together share the CPU: each one takes longer than it does alone, and the whole run takes at least the checks' total CPU time divided by the number of cores. Measured on a 4-CPU machine, with Node 24.21.0, three runs each, times in seconds:
