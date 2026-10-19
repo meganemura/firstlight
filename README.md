@@ -599,7 +599,7 @@ npm pack --dry-run    # the tarball's file list; prepack runs the build
 
 A failed test prints a depug evidence file and the command that reruns that one test.
 
-firstlight checks itself. `firstlight.json` in this repository runs `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`, all in parallel. After a full pass, `test` runs only the test files that `firstlight-node select` picks, from source, and always `test/pack.test.ts`, which tests `dist/`:
+firstlight checks itself. `firstlight.json` in this repository runs `typecheck`, `test`, `archstrict`, and a `mutation` run scoped to `src/checks.ts` and `src/config.ts`, all in parallel. After a full pass, `test` runs only the test files that `firstlight-node select` picks, from source, and always `test/pack.test.ts`, which tests `dist/`. A change to `src/node/layout.ts` runs the full suite, because the recorder imports that file before the coverage starts:
 
 ```sh
 node src/cli.ts run
