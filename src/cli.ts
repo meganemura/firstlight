@@ -50,6 +50,7 @@ import {
   readSelector,
   RECORD_ENV,
   SELECTOR_TIMEOUT_MS,
+  skipByPaths,
   type FullRun,
   type Narrowing,
   type SelectorExit,
@@ -146,6 +147,13 @@ A file matching one of its "fullOn" globs, a selector that fails or
 prints anything else, or --full runs the full command: "test passed
 (full run: <reason>, 10.2s)". For vitest, the package's own selector is
 "firstlight-node select"; see firstlight-node --help.
+
+A check in firstlight.json with "paths", a list of path globs like
+["src/**", "package.json"], runs again only when a file changed since
+its newest full pass matches one of them: "lint passed (not run: no file
+of 2 changed files since run 01K... matches its paths)". Until it has
+passed in full once, when git cannot list the changes, and under --full,
+it runs. With a selector too, "paths" is asked first.
 
 A failed or timed-out check whose log a parser reads prints its
 diagnostics, at most 20, as "file:line:col rule message" lines before a
@@ -385,8 +393,9 @@ interface Selected {
   fullRun: Map<string, FullRun>;
 }
 
-// A check with a selector and no result to reuse asks its selector which
-// tests the changes since its newest full pass reach. Its key then names
+// A check with `paths` and no result to reuse runs nothing when no file
+// changed since its newest full pass matches them. A check with a selector
+// asks it which tests the changes since that pass reach. Its key then names
 // the narrowed command, so a narrowed pass is never mistaken for a full
 // one, and running again on the same tree reuses it like any other result.
 // The selectors run here, before the supervisor starts, so the supervisor
@@ -402,12 +411,20 @@ async function selectTests(
   const selected: Selected = { narrowed: new Map(), fullRun: new Map() };
   await Promise.all(
     checks.map(async (check) => {
-      const selector = check.selector;
-      if (selector === undefined || reused.has(check.name)) return;
+      const { selector, paths } = check;
+      if ((selector === undefined && paths === undefined) || reused.has(check.name)) return;
       const base = ctx.state.narrowBase(check);
       if (base === null) return;
       const output = changedPaths(ctx.state.root, base.tree, tree);
-      const gate = gateChanges(selector.fullOn, output === null ? null : parseNameStatus(output));
+      const changes = output === null ? null : parseNameStatus(output);
+      const skip = paths === undefined ? null : skipByPaths(base.run, paths, changes);
+      if (skip !== null) {
+        keys.set(check.name, cacheKey(tree, narrowedKeyCommand(skip, check.run), check.after.map((dep) => keys.get(dep)!)));
+        selected.narrowed.set(check.name, skip);
+        return;
+      }
+      if (selector === undefined) return;
+      const gate = gateChanges(selector.fullOn, changes);
       if ("full" in gate) {
         selected.fullRun.set(check.name, { base: base.run, reason: gate.full });
         return;

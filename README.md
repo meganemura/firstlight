@@ -134,6 +134,7 @@ node src/cli.ts --help
 | `select` | A selector: a command that reads the changes since the check's last full pass on stdin and prints the tests they reach. It needs `runSelected`. See [Selecting tests](#selecting-tests), and [Selecting vitest tests](#selecting-vitest-tests) for the selector the package ships. |
 | `runSelected` | The command that runs the selected tests, with `{tests}` where their ids go, like `vitest run {tests}`. It needs `select`. |
 | `fullOn` | Path globs whose change runs the full `run` command without asking the selector, like `["package-lock.json", "vitest.config.ts"]`. `*` stays inside one directory and `**` crosses directories. It needs `select`. |
+| `paths` | Path globs the check reads, like `["src/**", "package.json"]`. Once the check has passed in full, it runs again only when a file changed since then matches one of them. See [Running checks by changed paths](#running-checks-by-changed-paths). |
 
 A check name in `firstlight.json` must match `[A-Za-z0-9][A-Za-z0-9._:-]*`, so that an argument that names it cannot also read as a pattern or a command. firstlight rejects unknown keys, unknown `after` names, cycles, and an unknown `parser` before it starts anything.
 
@@ -369,6 +370,32 @@ The limits:
 - A directory that is not the root of a git repository has no tree key, and nothing is reused there. A git failure has the same effect.
 
 In these cases, run `firstlight run --no-cache`. It runs every selected check, and still records the keys, so a later run can reuse its passes.
+
+## Running checks by changed paths
+
+A check with `paths` runs again only when a file it reads has changed:
+
+```json
+{
+  "checks": {
+    "lint": { "run": "npm run lint", "paths": ["src/**", "test/**", "eslint.config.js"] },
+    "docs": { "run": "npm run docs:check", "paths": ["*.md", "docs/**"] },
+    "test": { "run": "npm test" }
+  }
+}
+```
+
+firstlight compares the working tree with the tree of the check's newest full pass, the same comparison a selector gets, with deletions included. When git lists changes and none of them matches a glob in `paths`, that pass still holds, and the check passes without a process:
+
+```text
+lint passed (not run: no file of 2 changed files since run 01K... matches its paths)
+```
+
+A skipped check is not a new full pass, so the next run still counts from the old one: a change the skip saw does not go missing later. The check runs in full when it has not passed in full in a kept run yet, when git cannot list the changes, when a changed file matches, and under `firstlight run --full`. A check without `paths` always runs. The globs work like `fullOn`: `*` stays inside one directory and `**` crosses directories, so `**/*.md` does not match `README.md` at the root, and `*.md` does.
+
+`paths` is the coarse filter and a selector the fine one. A check with both asks `paths` first, and its selector only when a changed file matches. With `--json`, a skipped check's line has `"narrowed": {"base": "01K...", "files": [...], "tests": [], "command": null, "paths": [...]}`, and its `exit_code` is `null`.
+
+A glob list is a declaration that firstlight cannot check. A check that reads a file outside its `paths`, such as a shared config, passes on old evidence after that file changes. Name such files in `paths`, and run `firstlight run --full` before a merge.
 
 ## Selecting tests
 

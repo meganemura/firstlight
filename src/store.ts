@@ -481,7 +481,8 @@ function isRunRecord(value: unknown): value is RunRecord {
         check.parser === null ||
         typeof check.parser === "string" ||
         (Array.isArray(check.parser) && check.parser.every((name) => typeof name === "string"))) &&
-      (check.selector === undefined || isSelector(check.selector)),
+      (check.selector === undefined || isSelector(check.selector)) &&
+      (check.paths === undefined || isStringArray(check.paths)),
   );
 }
 
@@ -525,6 +526,7 @@ function isNarrowedRecord(value: unknown): value is Record<string, Narrowing> {
         typeof entry.base === "string" &&
         (entry.command === null || typeof entry.command === "string") &&
         isStringArray(entry.files) &&
+        (entry.paths === undefined || isStringArray(entry.paths)) &&
         Array.isArray(entry.tests) &&
         entry.tests.every((test) => isRecord(test) && typeof test.id === "string"),
     )

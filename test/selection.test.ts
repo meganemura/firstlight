@@ -208,7 +208,7 @@ test("select needs runSelected with {tests}, fullOn needs select, and affected i
   );
   assert.equal(
     await refusal({ affected: "vitest related {files}" }),
-    `invalid firstlight.json: check "test" has unknown key "affected"; allowed keys are run, after, timeoutSec, parser, select, runSelected, fullOn`,
+    `invalid firstlight.json: check "test" has unknown key "affected"; allowed keys are run, after, timeoutSec, parser, select, runSelected, fullOn, paths`,
   );
 
   const flag = makeRepo({ "firstlight.json": { checks: { test: { run: "true" } } } });

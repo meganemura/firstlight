@@ -1,6 +1,7 @@
 // Properties of the selector protocol: the name-status parser reads back
 // what git prints; the gate leaves the changes to the selector only when
-// git listed some and none is pinned by fullOn; a valid selector answer
+// git listed some and none is pinned by fullOn; a check with paths runs
+// nothing only when git listed some and none matches; a valid selector answer
 // reads back as written, and every other shape or failed exit runs in full;
 // and each selected id reaches the shell as exactly one word.
 
@@ -17,6 +18,7 @@ import {
   parseNameStatus,
   parseSelectorOutput,
   readSelector,
+  skipByPaths,
   substituteTests,
   type Change,
   type SelectedTest,
@@ -62,6 +64,25 @@ test("the gate hands the changes to the selector only when git listed some and n
       const asks = listed && changes.length > 0 && !pinned;
       assert.equal("changes" in gate, asks);
       if ("changes" in gate) assert.deepEqual(gate.changes, changes, "deletions go to the selector too");
+    },
+    { testCases: 300 },
+  );
+});
+
+test("paths skip a check only when git listed changes and none of them matches", () => {
+  hegel.test(
+    (tc) => {
+      const listed = tc.draw(gs.booleans());
+      const changes: Change[] = tc.draw(gs.arrays(change, { maxSize: 8 }));
+      const paths: string[] = tc.draw(gs.arrays(gs.sampledFrom(["*.lock", "a/**", "**/b", "zz"]), { minSize: 1, maxSize: 3 }));
+      const skip = skipByPaths("01K", paths, listed ? changes : null);
+      const matched = changes.some((entry) => paths.some((glob) => matchesPath(glob, entry.path)));
+      assert.equal(skip !== null, listed && changes.length > 0 && !matched);
+      if (skip === null) return;
+      assert.deepEqual(skip, { base: "01K", files: [...new Set(changes.map((entry) => entry.path))].sort(), tests: [], command: null, paths });
+      const key = narrowedKeyCommand(skip, "lint");
+      assert.notEqual(key, "lint");
+      assert.notEqual(key, narrowedKeyCommand({ ...skip, paths: undefined }, "lint"), "a paths skip and an empty selection never share a key");
     },
     { testCases: 300 },
   );

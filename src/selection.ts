@@ -53,12 +53,14 @@ export interface SelectorExit {
 }
 
 // A check that ran only the selected tests. `command` is null when the
-// selector chose none, and then nothing ran.
+// selector chose none, or when no changed file matched the check's `paths`,
+// and then nothing ran. `paths` is set only in that second case.
 export interface Narrowing {
   base: string;
   files: string[];
   tests: SelectedTest[];
   command: string | null;
+  paths?: string[];
 }
 
 // A check with a selector that had a full pass to count from and still ran
@@ -94,6 +96,17 @@ export function gateChanges(fullOn: readonly string[], changes: readonly Change[
   const pinned = changes.find((change) => fullOn.some((pattern) => matchesPath(pattern, change.path)));
   if (pinned !== undefined) return { full: `${pinned.path} matches fullOn` };
   return { changes: [...changes] };
+}
+
+// A check with `paths` reads only the files they match, so when git listed
+// changes since its newest full pass and none of them matches, that pass
+// still holds and the check runs nothing. A deleted file counts as a
+// change to its path. No listing, or an empty one, runs the check: the
+// first means git could not tell, and the second is the cache's to judge.
+export function skipByPaths(base: string, paths: readonly string[], changes: readonly Change[] | null): Narrowing | null {
+  if (changes === null || changes.length === 0) return null;
+  if (changes.some((change) => paths.some((pattern) => matchesPath(pattern, change.path)))) return null;
+  return { base, files: changedFiles(changes), tests: [], command: null, paths: [...paths] };
 }
 
 // Every way the selector can fail ends in the full run, never in a guess,
@@ -145,17 +158,23 @@ export function parseSelectorOutput(stdout: string): SelectorAnswer | { invalid:
 export function narrowTo(base: string, changes: readonly Change[], tests: readonly SelectedTest[], runSelected: string): Narrowing {
   return {
     base,
-    files: [...new Set(changes.map((change) => change.path))].sort(),
+    files: changedFiles(changes),
     tests: [...tests],
     command: tests.length === 0 ? null : substituteTests(runSelected, tests.map((test) => test.id)),
   };
 }
 
 // The command a narrowed result stands for in its cache key. Choosing no
-// test proves something too, but never what the full run proves, so it
-// gets a key no shell command shares.
-export function narrowedKeyCommand(narrowing: Narrowing, runSelected: string): string {
-  return narrowing.command ?? JSON.stringify(["no test selected", runSelected]);
+// test, or no change matching `paths`, proves something too, but never what
+// the full run proves, so each gets a key no shell command shares.
+// `command` is the check's runSelected, or its run for a `paths` skip.
+export function narrowedKeyCommand(narrowing: Narrowing, command: string): string {
+  if (narrowing.paths !== undefined) return JSON.stringify(["no change matches paths", narrowing.paths, command]);
+  return narrowing.command ?? JSON.stringify(["no test selected", command]);
+}
+
+function changedFiles(changes: readonly Change[]): string[] {
+  return [...new Set(changes.map((change) => change.path))].sort();
 }
 
 // A replacer function, because a replacement string reads "$'" and "$&"

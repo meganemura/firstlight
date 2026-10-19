@@ -131,11 +131,9 @@ class Supervisor {
     const log = this.logs.get(check.name)!;
     const narrowing = this.run.narrowed?.[check.name];
     if (narrowing?.command === null) {
-      const files = narrowing.files.length;
-      writeFileSync(
-        log,
-        `firstlight: not run; the selector chose no test for ${files} changed ${files === 1 ? "file" : "files"} since run ${narrowing.base}\n`,
-      );
+      const files = `${narrowing.files.length} changed ${narrowing.files.length === 1 ? "file" : "files"} since run ${narrowing.base}`;
+      const why = narrowing.paths === undefined ? `the selector chose no test for ${files}` : `no file of ${files} matches its paths`;
+      writeFileSync(log, `firstlight: not run; ${why}\n`);
       this.record(check.name, "passed", { elapsed_ms: 0, no_tests: true });
       return;
     }

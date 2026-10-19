@@ -6,7 +6,8 @@
 // Two steps lie outside the table, each legal only on an event that says
 // why: a result reused from an earlier run, `passed` or `failed` straight
 // from `pending` with the run it came from, and a pass straight from
-// `pending` when the check's selector chose no test, marked `no_tests`.
+// `pending` when the check's selector chose no test, or no changed file
+// matched its `paths`, marked `no_tests`.
 // Widening the table instead would let any check pass without ever
 // running.
 
@@ -59,6 +60,9 @@ export interface CheckSpec {
   // null, in run.json.
   parser?: string | string[] | null;
   selector?: Selector;
+  // Path globs: once the check has passed in full, it runs again only when
+  // a file changed since then matches one of them.
+  paths?: string[];
 }
 
 // A check's way to run only the tests the changes reach. See selection.ts.

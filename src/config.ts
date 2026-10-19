@@ -28,7 +28,7 @@ const CHECK_LIKE = new Set(["lint", "typecheck", "test", "check", "archstrict"])
 // command or a script glob. ":" is allowed so a check can keep the name of
 // the script it runs, like check:architecture.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
-const CHECK_KEYS = ["run", "after", "timeoutSec", "parser", "select", "runSelected", "fullOn"];
+const CHECK_KEYS = ["run", "after", "timeoutSec", "parser", "select", "runSelected", "fullOn", "paths"];
 
 export interface Config {
   source: "firstlight.json" | "package.json";
@@ -123,6 +123,12 @@ function parseCheck(name: string, value: unknown, file: string): CheckSpec {
   }
   const selector = parseSelector(name, value, file);
   if (selector !== null) spec.selector = selector;
+  if (value.paths !== undefined) {
+    if (!isGlobList(value.paths) || value.paths.length === 0) {
+      throw invalid(file, `check "${name}" has "paths" that is not a non-empty array of path globs, like ["src/**", "package.json"]`);
+    }
+    spec.paths = [...new Set(value.paths)];
+  }
   return spec;
 }
 
@@ -145,10 +151,14 @@ function parseSelector(name: string, value: Record<string, unknown>, file: strin
       `check "${name}" has "runSelected" that is not a shell command holding ${TESTS_PLACEHOLDER}, like "vitest run ${TESTS_PLACEHOLDER}"`,
     );
   }
-  if (fullOn !== undefined && !(Array.isArray(fullOn) && fullOn.every((glob) => typeof glob === "string" && glob.length > 0))) {
+  if (fullOn !== undefined && !isGlobList(fullOn)) {
     throw invalid(file, `check "${name}" has "fullOn" that is not an array of path globs`);
   }
   return { select, runSelected, fullOn: (fullOn as string[] | undefined) ?? [] };
+}
+
+function isGlobList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((glob) => typeof glob === "string" && glob.length > 0);
 }
 
 function validateGraph(checks: CheckSpec[], file: string): void {

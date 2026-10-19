@@ -346,6 +346,9 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
 function narrowedText(narrowing: Narrowing): string {
   const tests = narrowing.tests.length;
   const files = narrowing.files.length;
+  if (narrowing.paths !== undefined) {
+    return `not run: no file of ${files} changed ${plural(files, "file")} since run ${narrowing.base} matches its paths`;
+  }
   return `selected ${tests} ${plural(tests, "test")} for ${files} changed ${plural(files, "file")} since run ${narrowing.base}`;
 }
 
