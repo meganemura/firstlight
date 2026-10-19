@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-19)
 
 - The README has a "Setting up with an agent" section: a prompt to paste into a coding agent that finds a repository's checks, writes `firstlight.json` with `paths`, verifies it with two runs, and adds the commands to `AGENTS.md`.
 
