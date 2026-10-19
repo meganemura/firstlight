@@ -64,6 +64,43 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
    firstlight run lint typecheck test
    ```
 
+## Setting up with an agent
+
+Paste this prompt into a coding agent in the repository to set firstlight up. It needs no skill or plugin.
+
+```text
+Set up firstlight (https://github.com/meganemura/firstlight) as this
+repository's check runner. Read its README first, then:
+
+1. Find every check a change must pass: lint, format, typecheck, tests,
+   architecture checks. Look at the package.json scripts, the CI
+   workflows, the Makefile or Rakefile, and AGENTS.md or CLAUDE.md. Use
+   the exact commands CI runs.
+2. Add firstlight as a development dependency (npm i -D firstlight) when
+   the project has a package.json. Otherwise run it with npx firstlight.
+   It needs Node 24 or newer.
+3. Write firstlight.json. Start from `npx firstlight init <scripts>` for
+   npm scripts, and add other commands by hand. For each check:
+   - "after" only when it really needs another check's output.
+   - "timeoutSec" when it can take longer than 600 seconds.
+   - "parser" when firstlight cannot infer it and the tool is tsc,
+     vitest, node --test, or archstrict.
+   - "paths": the globs of every file the check reads, including its
+     config files and the lockfile. Leave "paths" out when you cannot
+     name them all. A check that reads a file outside its paths passes
+     on old evidence, so a missing glob is worse than no "paths".
+   - For vitest tests, the selector from the README section "Selecting
+     vitest tests" when its requirements hold.
+4. Run `npx firstlight run`, fix the configuration until every check
+   passes or fails for a real reason, and run it again to see the
+   reused results. Then change one file that only some checks read,
+   and confirm the others say "not run: ... matches its paths".
+5. Add to AGENTS.md (or CLAUDE.md): run checks with `npx firstlight run`,
+   follow the "next:" line it prints, use `npx firstlight run --failed`
+   after a fix, and `npx firstlight run --full` before a merge.
+6. Report the checks, their paths, and the output of the runs in step 4.
+```
+
 ## Arguments of `run`
 
 `run` is the parallel `run-p` equivalent. Each argument is one of:
