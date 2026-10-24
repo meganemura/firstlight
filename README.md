@@ -42,7 +42,7 @@ and run `firstlight run`, or `firstlight run rspec` for one of them.
 
    While other checks are still running, the next command is `firstlight results --wait`.
 
-2. Fix the failure. Meanwhile, the other checks continue.
+2. Fix the failure. A failed test comes with a `rerun:` command that runs only that test ([test results](#test-results)). Meanwhile, the other checks continue.
 
 3. Read the rest:
 
@@ -89,8 +89,10 @@ repository's check runner. Read its README first, then:
      config files and the lockfile. Leave "paths" out when you cannot
      name them all. A check that reads a file outside its paths passes
      on old evidence, so a missing glob is worse than no "paths".
-   - For vitest tests, the selector from the README section "Selecting
-     vitest tests" when its requirements hold.
+   - For vitest tests, add firstlight/node/vitest-setup to setupFiles, so
+     each failed test comes with a command that reruns only that test,
+     and the selector from the README section "Selecting vitest tests"
+     when its requirements hold.
 4. Run `npx firstlight run`, fix the configuration until every check
    passes or fails for a real reason, and run it again to see the
    reused results. Then change one file that only some checks read,
@@ -368,6 +370,40 @@ test failed (exit 1, 3.2s)
 In `--json`, the diagnostic line gets `evidence` (the absolute path) and `rerun` (the command) as two more fields. A diagnostic without them has neither field.
 
 firstlight matches by the test file and the full test name in depug's rerun command, against the file and the name in vitest's `FAIL` header. vitest joins the names with ` > ` and depug with a space, so two tests can look the same (`a > b c` and `a b > c`). When two failed tests, or two depug failures, have the same file and name, or when depug printed nothing for a test, firstlight attaches nothing to it. A log without depug lines gives the same diagnostics as before. This applies everywhere diagnostics show: `run`, `results`, `results --new`, and `follow`.
+
+## Test results
+
+firstlight records the result of each test that a check runs, and gives each failed test a command that runs only that test:
+
+```text
+test failed (exit 1, 3 tests, 1 failed, 0.4s)
+  test/math.test.mjs:6 math > subtracts Expected values to be strictly equal: 2 !== 1
+    rerun: node --test --test-name-pattern="^subtracts$" "test/math.test.mjs"
+  tests: /.../test.tests.jsonl
+  log: /.../test.log
+```
+
+A failed test is a diagnostic: its file and line, the test's full name as the rule, the first lines of its error as the message, and `rerun`. So `results --new` tells a new failed test from a known one, and a repeated failure that firstlight reuses keeps its failed tests. A test result takes the place of the vitest or node:test parser's diagnostic for the same test; the parser still reports what no recorder sees, such as a test file that failed to load. The status line counts the tests, and `tests:` names the file that holds every result, passed ones too, each with its duration.
+
+Recorders write the results, one per test runner:
+
+| Runner | How firstlight reaches it | `rerun` |
+| --- | --- | --- |
+| node:test | `--import` added to `NODE_OPTIONS`; it acts only in the process `node --test` starts for one test file | `node --test --test-name-pattern="^<name>$" "<file>"`. The pattern matches the test's own name, not its suites' names, so two tests with one name in one file both run. |
+| vitest | the setup file `firstlight/node/vitest-setup` in `setupFiles`, the same file the [vitest selector](#selecting-vitest-tests) uses. vitest has no environment variable for a setup file, so this one line is needed. | `npx vitest run "<file>" -t "^<suite> <test>$"`, or depug's rerun when [depug](#depug-evidence-and-rerun) matched the test |
+| minitest 5 and 6 | `-r` added to `RUBYOPT` (Ruby 3.2 or later) | `ruby -Ilib -Itest <file> --name 'Class#test_name'`, or `bin/rails test <file>:<line>` in a Rails app |
+| RSpec 3 | `--require` added to `SPEC_OPTS` | `rspec '<example id>'`, like `rspec './spec/a_spec.rb[1:2]'`, which names one example even when a loop defines several on one line |
+
+Each recorder adds to the variable the check already has and changes no output: the log is what the test runner prints without firstlight. A Ruby rerun starts with `bundle exec` when the test ran under Bundler. A rerun runs from the repository root: when the test process ran in a subdirectory, as `cd web && npm test` does, the rerun starts with `cd web &&`. A test runner without a recorder, or a check that runs no test, gives no test results, and its log is read as before. A test that starts another test run in a child process passes `FIRSTLIGHT_TESTS` on, so the inner run's tests are recorded too; leave the variable out of that child's environment when they should not count.
+
+In `--json`, the check line gains `tests`, the counts and the file, as soon as a test has finished, while the check still runs:
+
+```json
+{"type":"check","name":"test","status":"failed",...,"tests":{"passed":2,"failed":1,"skipped":0,"file":"/.../test.tests.jsonl"}}
+{"type":"diagnostic","check":"test","file":"test/math.test.mjs","line":6,"col":null,"rule":"math > subtracts","message":"Expected values to be strictly equal: 2 !== 1","rerun":"node --test --test-name-pattern=\"^subtracts$\" \"test/math.test.mjs\""}
+```
+
+The tests file is JSON Lines, one object per finished test: `file`, `line` (the test's line; for node:test, the line in the test file where a failed test threw, and `null` for a passed one), `name`, `status` (`passed`, `failed`, or `skipped`), `duration_ms`, `message`, `rerun`, and `cwd`, the directory the test process ran in, where `file` and `rerun` start from. `jq -s 'sort_by(.duration_ms) | reverse | .[:5]' <file>` lists the five slowest tests. Another test runner can join by appending such lines to the file that `FIRSTLIGHT_TESTS` names, which firstlight sets for every check.
 
 ## Reused results
 
@@ -647,7 +683,7 @@ The default output is short plain text with no colors. `--json` prints JSON Line
 {"type":"summary","run":"01K...","failed":["lint"],"running":["test"],"passed":["build"],"cancelled":[],"next":"firstlight results --wait","eta_ms":8012}
 ```
 
-`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`: `firstlight results --wait` while a check is still running, and `firstlight run --failed` once every check is done and one did not pass. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `cached_from` is the id of the run that ran a reused check, or `null`. That run may be pruned since. For a reused check, `exit_code` and `elapsed_ms` come from that run, and its log holds one line that names it. `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
+`failed` in the summary holds the checks that are `failed`, `timed_out`, `skipped`, or `unknown`. `running` holds `pending` and `running` checks. `next` is the command to run next, or `null`: `firstlight results --wait` while a check is still running, and `firstlight run --failed` once every check is done and one did not pass. `eta_ms` on a check is the estimated milliseconds it has left: `0` for a finished check, and `null` when there is no estimate. `overdue` is `true` when a running check has run longer than its usual duration; its `eta_ms` is then `0`. `cached_from` is the id of the run that ran a reused check, or `null`. That run may be pruned since. For a reused check, `exit_code` and `elapsed_ms` come from that run, and its log holds one line that names it. `tests`, on a check whose tests a recorder saw, holds the counts of passed, failed, and skipped tests and the file of their results ([test results](#test-results)). `eta_ms` in the summary is the estimate for the whole run, `0` when nothing is left to run, or `null`.
 
 ## Exit codes
 

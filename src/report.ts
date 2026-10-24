@@ -1,18 +1,28 @@
 // How a run looks to the agent that asked: short plain text by default, or
 // JSON Lines (one object per check, then one summary) with --json. It only
 // formats a RunSnapshot and its estimate; deciding exit codes and next
-// commands is the CLI's. A failed check's log is read through its parser,
-// when it has one, so its diagnostics come before the tail, each with the
-// evidence file and rerun command depug printed for it, when there are. `results --new`
+// commands is the CLI's. A failed check's diagnostics come before the tail:
+// its failed tests, from the results its test recorders wrote, then what
+// its parser finds in the log, each with the rerun command and depug's
+// evidence file, when there are. `results --new`
 // gets its own text and JSON here too, from a comparison the CLI made.
 
 import { countFailures, isUnproven, type CheckComparison } from "./baseline.ts";
 import { bucketOf, isSettled, type CheckView } from "./checks.ts";
 import { FALLBACK_SCRIPTS } from "./config.ts";
-import { formatDiagnostic, isParserChoice, parseDiagnostics, parserList, type Diagnostic } from "./diagnostics.ts";
+import {
+  attachDepugToTests,
+  formatDiagnostic,
+  isParserChoice,
+  parseDiagnostics,
+  parserList,
+  type Diagnostic,
+  type ParserName,
+} from "./diagnostics.ts";
 import { formatSeconds, type CheckEta, type RunEta } from "./eta.ts";
 import type { Narrowing } from "./selection.ts";
-import { logPaths, readLogEnd, tailLines, type RunRecord, type RunSnapshot } from "./store.ts";
+import { logPaths, readLogEnd, readTests, tailLines, testsPaths, type RunRecord, type RunSnapshot } from "./store.ts";
+import { countTests, testDiagnostics, type TestCounts } from "./tests.ts";
 
 export const TAIL_LINES = 40;
 // With diagnostics, they carry the substance, and the tail only shows the
@@ -26,13 +36,32 @@ interface LogReport {
   tail: string[];
 }
 
-// Every diagnostic in the log of one check of a run, through the parser
-// that run recorded for it.
+// Every diagnostic of one check of a run: its failed tests, when a test
+// recorder wrote any results, then what the parser that run recorded for
+// it finds in the log. A test result names its test exactly and carries
+// its rerun, so it stands in for the parser's diagnostic of the same test;
+// the parser still reports what no recorder sees, such as a test file that
+// failed to load.
 export function checkDiagnostics(run: RunRecord, dir: string, name: string): Diagnostic[] {
   const parser = run.checks.find((check) => check.name === name)?.parser;
-  if (!isParserChoice(parser)) return [];
+  const results = readTests(testsPaths(dir, run.checks).get(name)!, run.root) ?? [];
+  const parsers = isParserChoice(parser) ? parserList(parser) : [];
+  if (results.length === 0 && parsers.length === 0) return [];
   const log = readLogEnd(logPaths(dir, run.checks).get(name)!);
-  return parserList(parser).flatMap((one) => parseDiagnostics(one, log, run.root));
+  const recorded = new Set(results.map((result) => result.name));
+  const parsed = parsers
+    .flatMap((one) => parseDiagnostics(one, log, run.root).filter((diagnostic) => !TEST_RUNNER_PARSERS.includes(one) || !recorded.has(diagnostic.rule ?? "")));
+  return [...attachDepugToTests(testDiagnostics(results), log), ...parsed];
+}
+
+const TEST_RUNNER_PARSERS: readonly ParserName[] = ["vitest", "node-test"];
+
+// The counts of a check's recorded test results and the file that holds
+// them, or null when no recorder wrote one.
+export function checkTests(run: RunRecord, dir: string, name: string): (TestCounts & { file: string }) | null {
+  const file = testsPaths(dir, run.checks).get(name)!;
+  const results = readTests(file, run.root);
+  return results === null || results.length === 0 ? null : { ...countTests(results), file };
 }
 
 // `shown` narrows the diagnostics printed, as `results --new` does; the
@@ -124,6 +153,8 @@ export function checkJson(snapshot: RunSnapshot, view: CheckView, eta: RunEta, c
   const fullRun = snapshot.run.full_run?.[view.name];
   if (fullRun !== undefined) line.full_run = fullRun;
   if (view.orphan) line.orphan = true;
+  const tests = checkTests(snapshot.run, snapshot.dir, view.name);
+  if (tests !== null) line.tests = tests;
   if (compared !== undefined) {
     line.new = compared.comparison?.isNew ?? false;
     line.baseline = compared.baseline;
@@ -204,13 +235,22 @@ function logBlock(snapshot: RunSnapshot, view: CheckView, compared?: Compared): 
     ...report.diagnostics.flatMap((diagnostic) => [`  ${formatDiagnostic(diagnostic)}`, ...depugLines(diagnostic)]),
     ...more,
     ...known,
+    ...testsFileLine(snapshot, view),
     `  log: ${file}`,
     ...(report.tail.length === 0 ? ["    (no output)"] : report.tail.map((line) => `    ${line}`)),
   ];
 }
 
+function testsFileLine(snapshot: RunSnapshot, view: CheckView): string[] {
+  const tests = checkTests(snapshot.run, snapshot.dir, view.name);
+  return tests === null ? [] : [`  tests: ${tests.file}`];
+}
+
 function depugFields(diagnostic: Diagnostic): { evidence?: string; rerun?: string } {
-  return diagnostic.evidence === undefined ? {} : { evidence: diagnostic.evidence, rerun: diagnostic.rerun };
+  return {
+    ...(diagnostic.evidence === undefined ? {} : { evidence: diagnostic.evidence }),
+    ...(diagnostic.rerun === undefined ? {} : { rerun: diagnostic.rerun }),
+  };
 }
 
 function depugLines(diagnostic: Diagnostic): string[] {
@@ -329,6 +369,8 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
     const fullRun = snapshot.run.full_run?.[view.name];
     if (fullRun !== undefined) details.push(`full run: ${fullRun.reason}`);
     if (view.exit_code !== null) details.push(`exit ${view.exit_code}`);
+    const tests = checkTests(snapshot.run, snapshot.dir, view.name);
+    if (tests !== null) details.push(testsText(tests));
     const elapsed =
       view.elapsed_ms ?? (view.status === "running" && view.started_at !== null ? Date.now() - Date.parse(view.started_at) : null);
     if (elapsed !== null) details.push(`${(elapsed / 1000).toFixed(1)}s`);
@@ -341,6 +383,12 @@ function statusLine(snapshot: RunSnapshot, view: CheckView, eta: RunEta): string
     }
   }
   return details.length === 0 ? `${view.name} ${view.status}` : `${view.name} ${view.status} (${details.join(", ")})`;
+}
+
+function testsText(tests: TestCounts): string {
+  const parts = (["failed", "skipped"] as const).filter((status) => tests[status] > 0).map((status) => `${tests[status]} ${status}`);
+  const total = tests.passed + tests.failed + tests.skipped;
+  return `${total} ${plural(total, "test")}${parts.length === 0 ? "" : `, ${parts.join(", ")}`}`;
 }
 
 function narrowedText(narrowing: Narrowing): string {

@@ -32,6 +32,7 @@
   },
   "files": [
     "dist",
+    "ruby",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

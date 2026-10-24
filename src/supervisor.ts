@@ -4,14 +4,16 @@
 // that file, so it also records the results the CLI chose to reuse, before
 // it starts anything, and their dependents start at once, and the pass of a
 // check whose selector chose no test. It gives the full run of a check with
-// a selector its record directory. It exits when every check is terminal,
+// a selector its record directory, and every check the test recorders and
+// the file they write. It exits when every check is terminal,
 // or after SIGTERM once it has cancelled what was left. It prints nothing;
 // the CLI reads the file.
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   advance,
   initialState,
@@ -22,9 +24,17 @@ import {
   type CheckStatus,
   type RunOutcome,
 } from "./checks.ts";
+import { shellQuote } from "./names.ts";
 import { signalGroup } from "./processes.ts";
 import { RECORD_ENV } from "./selection.ts";
-import { appendEvent, logPaths, recordPaths, type RunRecord } from "./store.ts";
+import { appendEvent, logPaths, recordPaths, testsPaths, type RunRecord } from "./store.ts";
+import { TESTS_ENV } from "./tests.ts";
+
+// The recorders ship beside the compiled code, so the extension of this
+// file, .ts from source or .js from the package, is theirs too.
+const NODE_TEST_RECORDER = fileURLToPath(new URL(`./recorders/node-test${path.extname(fileURLToPath(import.meta.url))}`, import.meta.url));
+const MINITEST_RECORDER = fileURLToPath(new URL("../ruby/firstlight_minitest.rb", import.meta.url));
+const RSPEC_RECORDER = fileURLToPath(new URL("../ruby/firstlight_rspec.rb", import.meta.url));
 
 export const SUPERVISE_COMMAND = "__supervise";
 export const GRACE_MS = 3_000;
@@ -48,6 +58,7 @@ class Supervisor {
   private readonly runDir: string;
   private readonly logs: Map<string, string>;
   private readonly records: Map<string, string>;
+  private readonly tests: Map<string, string>;
   private readonly states = new Map<string, CheckState>();
   private readonly running = new Map<string, Running>();
   private stopping = false;
@@ -58,6 +69,7 @@ class Supervisor {
     this.runDir = runDir;
     this.logs = logPaths(runDir, run.checks);
     this.records = recordPaths(runDir, run.checks);
+    this.tests = testsPaths(runDir, run.checks);
     for (const check of run.checks) this.states.set(check.name, initialState(check.name));
   }
 
@@ -84,6 +96,12 @@ class Supervisor {
           log,
           `${earlier}${earlier.endsWith("\n") || earlier === "" ? "" : "\n"}firstlight: not run; failed in run ${reuse.run} on the same working tree with the same command. Change something, or run it again with --no-cache if the failure came from outside the tree or may be flaky\n`,
         );
+        // The failed tests come with it, and with them the diagnostics.
+        try {
+          copyFileSync(`${reuse.log!.slice(0, -".log".length)}.tests.jsonl`, this.tests.get(check.name)!);
+        } catch {
+          // That run's recorders wrote nothing.
+        }
         this.record(check.name, "failed", { exit_code: reuse.exit_code!, elapsed_ms: reuse.elapsed_ms, cached_from: reuse.run });
         continue;
       }
@@ -147,6 +165,7 @@ class Supervisor {
       mkdirSync(dir, { recursive: true });
       env[RECORD_ENV] = dir;
     }
+    Object.assign(env, recorderEnv(env, this.tests.get(check.name)!));
     const fd = openSync(log, "a");
     let child;
     try {
@@ -234,6 +253,23 @@ class Supervisor {
     appendEvent(this.runDir, { type: "run", status: outcome, at: new Date().toISOString() });
     process.exit(0);
   }
+}
+
+// Every check gets the test recorders, because which runner a command
+// starts is not known before it runs, and each recorder does nothing in a
+// process that is not its runner's. Each is added to what the user's
+// environment already passes. RUBYOPT has no quoting, so a path with a
+// space leaves the minitest recorder out.
+export function recorderEnv(env: NodeJS.ProcessEnv, tests: string): NodeJS.ProcessEnv {
+  const add = (current: string | undefined, option: string): string =>
+    current === undefined || current.trim() === "" ? option : current.includes(option) ? current : `${current} ${option}`;
+  const out: NodeJS.ProcessEnv = {
+    [TESTS_ENV]: tests,
+    NODE_OPTIONS: add(env.NODE_OPTIONS, `--import=${JSON.stringify(NODE_TEST_RECORDER)}`),
+    SPEC_OPTS: add(env.SPEC_OPTS, `--require ${shellQuote(RSPEC_RECORDER)}`),
+  };
+  if (!/\s/.test(MINITEST_RECORDER)) out.RUBYOPT = add(env.RUBYOPT, `-r${MINITEST_RECORDER}`);
+  return out;
 }
 
 // A signal death is recorded with the shell convention, 128 plus the

@@ -41,6 +41,7 @@ export default {
     { glob: "src/eta.ts", tags: ["layer:machine", "part:core"] },
     { glob: "src/names.ts", tags: ["layer:machine", "part:core"] },
     { glob: "src/selection.ts", tags: ["layer:machine", "part:protocol"] },
+    { glob: "src/tests.ts", tags: ["layer:machine", "part:core"] },
     { glob: "src/config.ts", tags: ["layer:base", "part:core"] },
     { glob: "src/errors.ts", tags: ["layer:base", "part:core"] },
     { glob: "src/processes.ts", tags: ["layer:base", "part:core"] },
@@ -52,6 +53,7 @@ export default {
     { glob: "src/node/**", tags: ["layer:adapter", "part:node"] },
     { glob: "src/node/layout.ts", tags: ["layer:adapter", "part:node-layout"] },
     { glob: "src/node/vitest-setup.ts", tags: ["layer:adapter", "part:node-recorder"] },
+    { glob: "src/recorders/**", tags: ["layer:adapter", "part:recorder"] },
   ],
   // One module per source file, so every import between two files of src/
   // is checked. After an edit, run archstrict init to regenerate
@@ -72,7 +74,11 @@ export default {
     { name: "selection.ts", glob: "src/selection.ts", surface: "selection.ts" },
     { name: "store.ts", glob: "src/store.ts", surface: "store.ts" },
     { name: "supervisor.ts", glob: "src/supervisor.ts", surface: "supervisor.ts" },
+    { name: "tests.ts", glob: "src/tests.ts", surface: "tests.ts" },
     { name: "tree.ts", glob: "src/tree.ts", surface: "tree.ts" },
+    // The test recorders firstlight preloads into a check's processes by
+    // path. No surface file: nothing imports them.
+    { name: "recorders", glob: "src/recorders/**" },
     // The Node selector: the vitest recorder and the firstlight-node command.
     // It has no surface file, so nothing outside it may import it.
     { name: "node", glob: "src/node/**" },
@@ -93,10 +99,12 @@ export default {
     "names.ts",
     "node",
     "processes.ts",
+    "recorders",
     "report.ts",
     "selection.ts",
     "store.ts",
     "supervisor.ts",
+    "tests.ts",
     "tree.ts",
     "vitest.config.ts",
   ],

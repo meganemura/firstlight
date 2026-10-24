@@ -7,6 +7,8 @@
 // does not import selection.ts, because its functions would then go
 // unrecorded in this repository's own suite.
 export const RECORD_ENV = "FIRSTLIGHT_RECORD";
+// The file each finished test gets a line in, as tests.ts names it.
+export const TESTS_ENV = "FIRSTLIGHT_TESTS";
 
 // Under $FIRSTLIGHT_RECORD: one directory per test file under RAW_DIR,
 // holding TEST_MARKER and any number of coverage files, the worker's own

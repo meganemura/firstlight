@@ -42,6 +42,7 @@ import { typicalDurations, type PastRun } from "./eta.ts";
 import { logFileNames } from "./names.ts";
 import { isPidAlive } from "./processes.ts";
 import type { FullRun, Narrowing } from "./selection.ts";
+import { parseTestLines, type TestResult } from "./tests.ts";
 
 export const KEEP_RUNS = 20;
 const RUN_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -353,6 +354,25 @@ export function logPaths(runDir: string, checks: readonly CheckSpec[]): Map<stri
 export function recordPaths(runDir: string, checks: readonly CheckSpec[]): Map<string, string> {
   const files = logFileNames(checks.map((check) => check.name));
   return new Map([...files].map(([name, file]) => [name, path.join(runDir, "record", file.slice(0, -".log".length))]));
+}
+
+// The file a check's test recorders append to, named like its log.
+export function testsPaths(runDir: string, checks: readonly CheckSpec[]): Map<string, string> {
+  const files = logFileNames(checks.map((check) => check.name));
+  return new Map([...files].map(([name, file]) => [name, path.join(runDir, `${file.slice(0, -".log".length)}.tests.jsonl`)]));
+}
+
+// A check whose recorders wrote nothing, or that ran with no recorder at
+// all, has no results.
+export function readTests(file: string, root: string): TestResult[] | null {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+  return parseTestLines(text, root);
 }
 
 export function eventsPath(runDir: string): string {

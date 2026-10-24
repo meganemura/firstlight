@@ -5,7 +5,7 @@
       "run": "npm test",
       "select": "node src/node/cli.ts select --always test/pack.test.ts --ignore '*.md' --ignore '**/*.md' --ignore 'features/**' --ignore '.github/**'",
       "runSelected": "npm test -- --passWithNoTests {tests}",
-      "fullOn": ["package-lock.json", "vitest.config.ts", "tsconfig.json", "test/helpers.ts", "src/node/layout.ts"]
+      "fullOn": ["package-lock.json", "vitest.config.ts", "tsconfig.json", "test/helpers.ts", "src/node/layout.ts", "ruby/**"]
     },
     "archstrict": { "run": "npm run archstrict" },
     "scenarios": { "run": "npm run test:scenarios" },

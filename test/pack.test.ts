@@ -39,8 +39,9 @@ test("the packed tarball installs a firstlight bin that runs a check, and the No
   assert.ok(files.includes("dist/node/vitest-setup.js"), files.join("\n"));
   assert.deepEqual(
     files.filter((file) => !file.startsWith("dist/")).sort(),
-    ["CHANGELOG.md", "LICENSE", "README.md", "package.json"],
+    ["CHANGELOG.md", "LICENSE", "README.md", "package.json", "ruby/firstlight_minitest.rb", "ruby/firstlight_rspec.rb", "ruby/firstlight_tests.rb"],
   );
+  assert.ok(files.includes("dist/recorders/node-test.js"), files.join("\n"));
   assert.deepEqual(
     files.filter((file) => file.startsWith("dist/") && !file.endsWith(".js")),
     [],
@@ -65,6 +66,13 @@ test("the packed tarball installs a firstlight bin that runs a check, and the No
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(checkStatuses(run.stdout), { true: "passed" });
   assert.deepEqual(parseLines(run.stdout).at(-1)!.passed, ["true"]);
+
+  mkdirSync(path.join(repo.root, "test"));
+  writeFileSync(path.join(repo.root, "test", "a.test.mjs"), 'import { test } from "node:test";\ntest("passes", () => {});\n');
+  const tested = spawnSync(bin, ["run", "--json", "--", "node --test"], { cwd: repo.root, encoding: "utf8", env });
+  assert.equal(tested.status, 0, tested.stderr);
+  const check = parseLines(tested.stdout).find((line) => line.type === "check")!;
+  assert.deepEqual((check.tests as Record<string, unknown>).passed, 1, tested.stdout);
 
   const selector = path.join(project, "node_modules", ".bin", "firstlight-node");
   assert.match(readFileSync(selector, "utf8"), /^#!\/usr\/bin\/env node\n/);

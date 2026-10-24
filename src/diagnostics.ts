@@ -22,8 +22,10 @@ export interface Diagnostic {
   col: number | null;
   rule: string | null;
   message: string;
-  // Present together, and only on a vitest diagnostic that depug matched.
+  // The evidence file depug printed for a vitest test it matched.
   evidence?: string;
+  // The command that runs only this test: depug's when it matched one,
+  // otherwise the test recorder's.
   rerun?: string;
 }
 
@@ -304,6 +306,14 @@ function depugFailures(lines: readonly string[]): DepugFailure[] {
     out.push({ testFile, name, evidence: evidence[1]!, rerun: rerun[1]! });
   }
   return out;
+}
+
+// A test recorder's failed vitest tests get depug's evidence the same way
+// the vitest parser's failures do, and depug's rerun, which keeps the seed,
+// in place of the recorder's.
+export function attachDepugToTests(tests: readonly Diagnostic[], log: string): Diagnostic[] {
+  const failures = tests.map((diagnostic) => ({ diagnostic, testFile: diagnostic.file, name: diagnostic.rule }));
+  return attachDepug(failures, depugFailures(toLines(log)));
 }
 
 // vitest's header joins the names with " > " and depug's pattern with a

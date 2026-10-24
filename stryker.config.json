@@ -5,8 +5,8 @@
   "coverageAnalysis": "perTest",
   "reporters": ["clear-text", "agent"],
   "appendPlugins": ["stryker-agent-reporter"],
-  "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/supervisor.ts", "!src/node/cli.ts", "!src/node/vitest-setup.ts"],
-  "mutate_comment": "The tests reach cli.ts, supervisor.ts, and the Node selector's bin only through child processes, which never see the active mutant, and the Node selector's recorder runs as a setup file before Stryker switches a mutant on, so their mutants could only report no coverage or survive.",
+  "mutate": ["src/**/*.ts", "!src/cli.ts", "!src/supervisor.ts", "!src/node/cli.ts", "!src/node/vitest-setup.ts", "!src/recorders/**"],
+  "mutate_comment": "The tests reach cli.ts, supervisor.ts, the Node selector's bin, and the node:test recorder only through child processes, which never see the active mutant, and the Node selector's recorder runs as a setup file before Stryker switches a mutant on, so their mutants could only report no coverage or survive.",
   "disableTypeChecks": "src/**/*.ts",
   "ignorePatterns": ["/tmp", "/reports", "/.hegel", "/dist"],
   "cleanTempDir": true
