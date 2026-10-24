@@ -34,7 +34,8 @@ function rerun(repo: Repo, command: string): string {
   const env = { ...process.env };
   delete env.FIRSTLIGHT_TESTS;
   const out = spawnSync("/bin/sh", ["-c", `${command} 2>&1`], { cwd: repo.root, encoding: "utf8", env });
-  return out.stdout;
+  // vitest colors its summary on CI even when it writes to a pipe.
+  return out.stdout.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
 const NODE_TEST = `import { describe, test } from "node:test";
